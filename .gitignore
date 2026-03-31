@@ -1,0 +1,67 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environment ────────────────────────────────────────────────────
+venv/
+env/
+.venv/
+ENV/
+
+# ── Build / distribution ───────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+*.spec
+
+# ── Compiled executables ───────────────────────────────────────────────────
+*.exe
+*.msi
+*.app
+
+# ── Runtime data (generated at runtime, not source) ───────────────────────
+scan_history.db
+scan_history.db-shm
+scan_history.db-wal
+settings.json
+reports/output/
+
+# ── Secrets / local config ────────────────────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ── IDE / editor ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Claude Code / AI tooling ──────────────────────────────────────────────
+.claude/
+.qodo/
+.codex/
+.cursor/
+.windsurf/
+.codeium/
+.gemini/
+
+# ── Test artefacts ────────────────────────────────────────────────────────
+test_vuln.*
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Logs ──────────────────────────────────────────────────────────────────
+*.log
