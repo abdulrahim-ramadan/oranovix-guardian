@@ -631,7 +631,7 @@ class IssueAccordion(ctk.CTkFrame):
             _code_block(fix)
 
         meta = ctk.CTkFrame(parent, fg_color="transparent")
-        meta.pack(fill="x", padx=16, pady=(4, 8))
+        meta.pack(fill="x", padx=16, pady=(4, 4))
         if issue.owasp_category:
             ctk.CTkLabel(meta,
                          text=f"\U0001f3f7\ufe0f {lm.t('owasp_category')}: "
@@ -648,6 +648,143 @@ class IssueAccordion(ctk.CTkFrame):
                      text=f"\U0001f4cd {lm.t('line_number')} {issue.line_number}",
                      font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
                      fg_color="transparent").pack(side="left")
+
+        # AI Fix button row
+        ai_row = ctk.CTkFrame(parent, fg_color="transparent")
+        ai_row.pack(fill="x", padx=16, pady=(4, 10))
+        ai_fix_btn = ctk.CTkButton(
+            ai_row,
+            text=f"\U0001f916  {lm.t('ai_fix')}",
+            width=110, height=26, corner_radius=6,
+            fg_color=tm.c("accent"), hover_color=tm.c("accent_h"),
+            text_color="#ffffff", font=ctk.CTkFont(size=10),
+            command=lambda i=issue, p=parent: self._show_ai_fix(i, p, ai_row),
+        )
+        ai_fix_btn.pack(side="left")
+        ctk.CTkLabel(
+            ai_row,
+            text=lm.t("ai_fix_hint"),
+            font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
+            fg_color="transparent",
+        ).pack(side="left", padx=(8, 0))
+
+    def _show_ai_fix(self, issue, parent_frame, ai_row) -> None:
+        """Generate and display an AI fix suggestion inline below the button row.
+
+        Replaces the AI Fix button with a loading indicator, then renders
+        the fix suggestion (fixed code + explanation + prevention + copy button)
+        once the generator completes.
+        """
+        from scanner_engine.ai_fix_generator import AIFixGenerator
+        tm = ThemeManager()
+        lm = LanguageManager()
+
+        # Hide button row while loading
+        for widget in ai_row.winfo_children():
+            widget.pack_forget()
+
+        loading_lbl = ctk.CTkLabel(
+            ai_row,
+            text=f"\u23f3  {lm.t('ai_fix_loading')}",
+            font=ctk.CTkFont(size=10),
+            text_color=tm.c("text2"),
+            fg_color="transparent",
+        )
+        loading_lbl.pack(side="left")
+
+        # Container for the fix panel (created now, populated in callback)
+        fix_frame = ctk.CTkFrame(parent_frame, fg_color=tm.c("log_bg"),
+                                  corner_radius=6)
+
+        def _on_fix(suggestion) -> None:
+            # Must update UI on the main thread
+            try:
+                loading_lbl.pack_forget()
+                fix_frame.pack(fill="x", padx=0, pady=(0, 8))
+
+                source_tag = (
+                    "\U0001f916 Gemini AI" if suggestion.source == "gemini"
+                    else "\U0001f4be Offline"
+                )
+                conf_pct = int(suggestion.confidence * 100)
+
+                # Header row: source badge + confidence
+                hdr = ctk.CTkFrame(fix_frame, fg_color="transparent")
+                hdr.pack(fill="x", padx=10, pady=(6, 2))
+                ctk.CTkLabel(
+                    hdr, text=source_tag,
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    text_color=tm.c("accent"), fg_color="transparent",
+                ).pack(side="left")
+                ctk.CTkLabel(
+                    hdr, text=f"{lm.t('ai_fix_confidence')}: {conf_pct}%",
+                    font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
+                    fg_color="transparent",
+                ).pack(side="right")
+
+                # Fixed code block
+                if suggestion.fixed_code:
+                    ctk.CTkLabel(
+                        fix_frame,
+                        text=f"\u2705 {lm.t('ai_fix_fixed_code')}:",
+                        font=ctk.CTkFont(size=9, weight="bold"),
+                        text_color=tm.c("success"), fg_color="transparent",
+                        anchor="w",
+                    ).pack(anchor="w", padx=10, pady=(4, 1))
+                    ctk.CTkLabel(
+                        fix_frame, text=suggestion.fixed_code,
+                        font=ctk.CTkFont(family="Consolas", size=9),
+                        text_color=tm.c("log_ok"), fg_color=tm.c("bg"),
+                        corner_radius=4, anchor="w", justify="left",
+                        wraplength=520,
+                    ).pack(fill="x", padx=10, pady=(0, 4))
+
+                # Explanation
+                if suggestion.explanation:
+                    ctk.CTkLabel(
+                        fix_frame,
+                        text=f"\U0001f4a1 {lm.t('ai_fix_explanation')}: "
+                             f"{suggestion.explanation}",
+                        font=ctk.CTkFont(size=9), text_color=tm.c("text2"),
+                        fg_color="transparent", wraplength=520,
+                        anchor="w", justify="left",
+                    ).pack(anchor="w", padx=10, pady=(0, 2))
+
+                # Prevention
+                if suggestion.prevention:
+                    ctk.CTkLabel(
+                        fix_frame,
+                        text=f"\U0001f6e1 {lm.t('ai_fix_prevention')}: "
+                             f"{suggestion.prevention}",
+                        font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
+                        fg_color="transparent", wraplength=520,
+                        anchor="w", justify="left",
+                    ).pack(anchor="w", padx=10, pady=(0, 4))
+
+                # Copy fix button
+                def _copy_fix() -> None:
+                    try:
+                        parent_frame.winfo_toplevel().clipboard_clear()
+                        parent_frame.winfo_toplevel().clipboard_append(
+                            suggestion.fixed_code
+                        )
+                    except Exception:
+                        pass
+
+                ctk.CTkButton(
+                    fix_frame,
+                    text=f"\U0001f4cb  {lm.t('ai_fix_copy')}",
+                    width=100, height=24, corner_radius=5,
+                    fg_color=tm.c("bg3"), hover_color=tm.c("hover"),
+                    text_color=tm.c("text2"), font=ctk.CTkFont(size=9),
+                    command=_copy_fix,
+                ).pack(anchor="w", padx=10, pady=(0, 8))
+
+            except Exception:
+                pass  # widget may have been destroyed
+
+        generator = AIFixGenerator()
+        generator.generate_fix_async(issue, issue.code_snippet, _on_fix)
 
     def _toggle(self, _=None) -> None:
         self._expanded = not self._expanded

@@ -143,5 +143,31 @@
   "select_target_first": "Please select a target first.",
   "detected_language": "Detected language:",
   "scan_engine": "Scan engine:",
-  "files_found": "file(s) found to scan"
+  "files_found": "file(s) found to scan",
+
+  "ai_fix": "AI Fix",
+  "ai_fix_hint": "Generate a fix suggestion for this issue",
+  "ai_fix_loading": "Generating fix...",
+  "ai_fix_fixed_code": "Fixed Code",
+  "ai_fix_explanation": "Why this works",
+  "ai_fix_prevention": "Prevention",
+  "ai_fix_confidence": "Confidence",
+  "ai_fix_copy": "Copy Fix",
+
+  "rules_manager": "Rules Manager",
+  "add_rule": "Add Rule",
+  "import_rules": "Import Rules",
+  "export_rules": "Export Rules",
+  "rules_active": "rules active",
+  "no_rules": "No rules loaded",
+  "rule_id": "Rule ID",
+  "rule_name": "Rule Name",
+  "rule_description": "Description",
+  "rule_pattern": "Regex Pattern",
+  "rule_severity": "Severity",
+  "rule_language": "Language",
+  "rule_fix": "Fix Suggestion",
+  "test_rule": "Test Rule",
+  "save_rule": "Save Rule",
+  "cancel": "Cancel"
 }

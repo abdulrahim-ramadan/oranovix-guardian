@@ -155,11 +155,13 @@ class PythonScanner(BaseScanner):
         return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     def _do_scan(self, target: str, result: ScanResult) -> ScanResult:
-        """Scan *target* using Bandit and supplemental regex checks.
+        """Scan *target* using Bandit, AST analysis, and supplemental regex checks.
 
         Collects all ``.py`` files under *target*, runs Bandit over the entire
-        target path for efficiency (Bandit handles its own recursion), then
-        applies the per-file regex checks for patterns that Bandit misses.
+        target path for efficiency, applies per-file AST analysis via
+        ASTAnalyzer, and then applies the per-file regex checks for patterns
+        that Bandit misses.  Duplicate issues (same rule_id + file + line) are
+        de-duplicated before returning.
 
         Args:
             target: Absolute path to a ``.py`` file or directory.
@@ -169,6 +171,8 @@ class PythonScanner(BaseScanner):
             The same ``result`` object, now containing all discovered issues
             and an updated ``files_scanned`` count.
         """
+        from .ast_analyzer import ASTAnalyzer
+
         files = self.collect_files(target, self.SUPPORTED_EXTENSIONS)
         result.files_scanned = len(files)
 
@@ -181,9 +185,29 @@ class PythonScanner(BaseScanner):
         issues = self._parse_bandit_output(raw)
         result.issues.extend(issues)
 
-        # Supplement with regex-based checks that Bandit does not cover
+        # Track (rule_id, file_path, line_number) to avoid duplicates
+        seen: set = {
+            (i.rule_id, i.file_path, i.line_number) for i in result.issues
+        }
+
         for file_path in files:
-            result.issues.extend(self._extra_checks(file_path))
+            # Regex-based supplemental checks
+            for issue in self._extra_checks(file_path):
+                key = (issue.rule_id, issue.file_path, issue.line_number)
+                if key not in seen:
+                    result.issues.append(issue)
+                    seen.add(key)
+
+            # AST-based analysis (exact line numbers, no false positives from comments)
+            try:
+                code = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+                for issue in ASTAnalyzer.analyze(code, file_path):
+                    key = (issue.rule_id, issue.file_path, issue.line_number)
+                    if key not in seen:
+                        result.issues.append(issue)
+                        seen.add(key)
+            except OSError:
+                pass
 
         return result
 
