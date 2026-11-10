@@ -134,6 +134,7 @@ class Language(Enum):
     PHP        = "PHP"
     JAVA       = "Java"
     CSHARP     = "C#"
+    HTML       = "HTML"
     UNKNOWN    = "Unknown"
 
     @classmethod
@@ -163,6 +164,9 @@ class Language(Enum):
             ".php":  cls.PHP,
             ".java": cls.JAVA,
             ".cs":   cls.CSHARP,
+            ".html": cls.HTML,
+            ".htm":  cls.HTML,
+            ".djhtml": cls.HTML,
         }
         return mapping.get(ext.lower(), cls.UNKNOWN)
 
