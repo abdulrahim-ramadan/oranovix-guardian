@@ -1,5 +1,37 @@
 # Oranovix Guardian — Development Progress
 
+## Phase 0 — Engine Foundation (branch `fix/engine-foundation`)
+
+Goal: make the scan engine trustworthy before adding features. Engine first, UI last.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | Every language in a folder is scanned. `ScannerFactory.scanners_for_target` returns one scanner per language present; `ScanOrchestrator` runs language scanners + `SecretsDetector` + `RuleEngine` and returns one merged `ScanResult`. The scanner page only calls the orchestrator. | `scanner_engine/orchestrator.py`, `scanner_engine/factory.py`, `gui/pages/scanner_page.py` |
+| 2 | Third-party folders are skipped by every engine through one shared `EXCLUDED_DIRS` (venv, .venv, env, node_modules, `__pycache__`, .git, dist, build, site-packages, migrations). | `scanner_engine/base.py` |
+| 3 | Bandit runs as a library (`BanditRunner`) on the already filtered file list. If it cannot load or run, `ScanResult.engine_warnings` is filled and shown in the scan log, status bar and PDF. | `scanner_engine/bandit_runner.py`, `scanner_engine/python_scanner.py`, `reports/pdf_generator.py` |
+| 4 | Duplicates are merged. Every rule has an `IssueCategory`; `IssueMerger` merges issues with the same (file, line, category), keeps the highest severity and stores the other rule ids in `Issue.also_detected_by`. Title "Hardcoded Hardcoded Password" fixed. | `scanner_engine/categories.py`, `scanner_engine/issue_merger.py` |
+| 5 | False positives cut. SEC002 (regex `open()` path traversal) is disabled until it returns as a taint rule. RULE-002 ignores `127.0.0.1`, `0.0.0.0` and version strings (`Rule.exclude_line_pattern`). | `scanner_engine/python_scanner.py`, `scanner_engine/rule_engine.py`, `rules/default_rules.json` |
+| 6 | Score no longer saturates: `weighted = 40*C + 20*H + 5*M + 1*L`, `score = round(100 * (1 - 0.5 ** (weighted / 40)))`. Labels unchanged; raw counts (`C:3 H:1 M:0 L:2`) are shown next to the score. | `scanner_engine/base.py` |
+| 7 | Central alarm. `AlarmCenter.notify(findings)`: CRITICAL → critical sound + red toast + taskbar flash; HIGH → toast only. Stable finding id = sha1(category + relative path + line), stored in SQLite so a finding never alarms twice. Channels are injected so a background monitor can reuse it. Text in AR/DE/EN. | `core/alarm_center.py`, `gui/alarm_channels.py` |
+| 8 | pytest suite (no GUI) with a vulnerable corpus in `tests/corpus/`. Run: `venv\Scripts\python -m pytest`. | `tests/`, `pytest.ini`, `src/requirements-dev.txt` |
+| 9 | Repo cleanup: `release/` untracked and ignored; Gemini model read from `settings.json` (`gemini_model`, default `gemini-flash-latest`); a 404 gives a clear message. | `.gitignore`, `scanner_engine/gemini_config.py` |
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet.
+- Bandit now loads its checks as plugins, so PyInstaller needs:
+  `--collect-all bandit --collect-all stevedore --copy-metadata bandit`.
+  `bandit.exe` no longer has to be bundled.
+- Score reference points: 1 low = 2, 1 high = 29, 1 critical = 50, 2 criticals = 75, 3 criticals = 88, 8 or more criticals round to 100.
+
+### Open items
+
+- SEC002 path traversal returns as a taint-tracking rule.
+- Background monitor that feeds `AlarmCenter.notify`.
+- Dashboard history still shows the score without the raw counts.
+
+---
+
 ## v1.1.0 — Advanced Features Release
 
 ### Feature 1: Secrets Detection ✅
