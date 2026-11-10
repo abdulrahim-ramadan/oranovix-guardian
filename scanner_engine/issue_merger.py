@@ -4,12 +4,14 @@ Collapses findings that describe the same weakness on the same line.
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, Iterable, List, Tuple
 
 from .base import Issue
 from .categories import IssueCategory
 
 _MergeKey = Tuple[str, int, str]
+_BANDIT_RULE_ID = re.compile(r"^B\d{3}$")
 
 
 class IssueMerger:
@@ -17,7 +19,9 @@ class IssueMerger:
 
     The highest-severity issue of each group survives; the rule IDs of
     the others are recorded in ``also_detected_by``.  Uncategorised
-    issues are only merged with exact repeats of the same rule.
+    issues are only merged with exact repeats of the same rule.  When a
+    Bandit issue survives, it takes the title of one of our own rules in
+    the group, which names the problem more precisely.
     """
 
     def merge(self, issues: Iterable[Issue]) -> List[Issue]:
@@ -42,4 +46,8 @@ class IssueMerger:
             for rule_id in (other.rule_id, *other.also_detected_by):
                 if rule_id != primary.rule_id and rule_id not in primary.also_detected_by:
                     primary.also_detected_by.append(rule_id)
+        if _BANDIT_RULE_ID.match(primary.rule_id):
+            own_rules = [i for i in group if not _BANDIT_RULE_ID.match(i.rule_id)]
+            if own_rules:
+                primary.title = max(own_rules, key=lambda i: i.severity.weight).title
         return primary

@@ -68,6 +68,71 @@ _ESCALATE_TO_HIGH: set[str] = {
     "B607",  # partial path in subprocess
 }
 
+# Bandit names many checks after its internal plugin ("blacklist", "hashlib",
+# "yaml_load"), which says nothing to a reader.  These titles replace them.
+_BANDIT_TITLES: dict[str, str] = {
+    "B101": "assert used outside tests",
+    "B102": "Use of exec()",
+    "B103": "Permissive file permissions",
+    "B104": "Binding to all network interfaces",
+    "B105": "Hardcoded password",
+    "B106": "Hardcoded password in function argument",
+    "B107": "Hardcoded password as default argument",
+    "B108": "Insecure temporary file path",
+    "B110": "Exception silently ignored (try/except/pass)",
+    "B112": "Exception silently ignored (try/except/continue)",
+    "B113": "HTTP request without timeout",
+    "B201": "Flask debug mode enabled",
+    "B301": "Unsafe pickle deserialization",
+    "B302": "Unsafe marshal deserialization",
+    "B303": "Weak hash function",
+    "B304": "Insecure cipher",
+    "B305": "Insecure cipher mode",
+    "B306": "Insecure tempfile.mktemp()",
+    "B307": "Use of eval()",
+    "B308": "mark_safe() may enable XSS",
+    "B310": "URL opened without scheme check",
+    "B311": "Non-cryptographic random generator",
+    "B312": "Use of telnetlib (unencrypted)",
+    "B313": "Unsafe XML parsing", "B314": "Unsafe XML parsing",
+    "B315": "Unsafe XML parsing", "B316": "Unsafe XML parsing",
+    "B317": "Unsafe XML parsing", "B318": "Unsafe XML parsing",
+    "B319": "Unsafe XML parsing", "B320": "Unsafe XML parsing",
+    "B321": "Use of FTP (unencrypted)",
+    "B323": "Unverified SSL context",
+    "B324": "Weak hash function",
+    "B401": "Import of telnetlib",
+    "B402": "Import of ftplib",
+    "B403": "Import of pickle",
+    "B404": "Import of subprocess",
+    "B405": "Import of unsafe XML parser", "B406": "Import of unsafe XML parser",
+    "B407": "Import of unsafe XML parser", "B408": "Import of unsafe XML parser",
+    "B409": "Import of unsafe XML parser", "B410": "Import of unsafe XML parser",
+    "B411": "Import of xmlrpc",
+    "B413": "Import of pycrypto (unmaintained)",
+    "B501": "TLS certificate verification disabled",
+    "B502": "Insecure SSL/TLS protocol version",
+    "B503": "Insecure SSL/TLS default protocol",
+    "B504": "SSL used without protocol version",
+    "B505": "Weak cryptographic key size",
+    "B506": "Unsafe yaml.load()",
+    "B507": "SSH host key not verified",
+    "B601": "Shell command through paramiko",
+    "B602": "subprocess call with shell=True",
+    "B603": "subprocess call with unchecked input",
+    "B604": "Function call with shell=True",
+    "B605": "Shell command execution",
+    "B606": "Process started without a shell",
+    "B607": "Process started with a partial path",
+    "B608": "SQL built from strings",
+    "B609": "Wildcard injection in shell command",
+    "B610": "SQL injection via Django extra()",
+    "B611": "SQL injection via Django RawSQL",
+    "B701": "Jinja2 autoescape disabled",
+    "B702": "Mako template without escaping",
+    "B703": "Django mark_safe() may enable XSS",
+}
+
 # ---------------------------------------------------------------------------
 # Extra regex checks (supplement Bandit)
 # ---------------------------------------------------------------------------
@@ -180,7 +245,7 @@ class PythonScanner(BaseScanner):
 
         return Issue(
             rule_id=finding.test_id,
-            title=finding.test_name.replace("_", " ").title(),
+            title=self._title_for(finding),
             description=finding.text,
             severity=severity,
             file_path=finding.file_path,
@@ -236,6 +301,13 @@ class PythonScanner(BaseScanner):
             ))
 
         return extra
+
+    @staticmethod
+    def _title_for(finding: BanditFinding) -> str:
+        """Readable title for a Bandit finding; falls back to its test name."""
+        return _BANDIT_TITLES.get(
+            finding.test_id, finding.test_name.replace("_", " ").title()
+        )
 
     @staticmethod
     def _build_recommendation(test_id: str) -> str:

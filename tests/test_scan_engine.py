@@ -133,3 +133,15 @@ def test_file_matcher_handles_dotfiles_and_plain_names() -> None:
 def test_collect_files_accepts_a_single_dotfile() -> None:
     dotenv = CORPUS / ".env"
     assert BaseScanner.collect_files(str(dotenv), [".env"]) == [str(dotenv)]
+
+
+def test_issue_titles_are_never_generic_bandit_names() -> None:
+    issues = scan(SINGLE / "bandit_generic_titles.py").issues
+    titles = {issue.rule_id: issue.title for issue in issues}
+
+    assert {"B307", "B324", "B301", "B506"} <= set(titles)
+    for generic in ("Blacklist", "Hashlib", "Yaml Load"):
+        assert generic not in titles.values()
+    assert "eval()" in titles["B307"]
+    assert titles["B301"] == "Unsafe pickle deserialization"
+    assert titles["B506"] == "Unsafe yaml.load()"
