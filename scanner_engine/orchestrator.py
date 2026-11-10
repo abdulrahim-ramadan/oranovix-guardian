@@ -72,10 +72,20 @@ class ScanOrchestrator:
         self._run_rule_engine(target, result)
 
         result.issues = self._merger.merge(result.issues)
+        result.files_scanned = len(self.scannable_files(target))
         result.status = ScanStatus.COMPLETED
         result.finished_at = datetime.now()
         self._report(ScanStage.FINISHED, "Scan finished.", 1.0, "done")
         return result
+
+    @staticmethod
+    def scannable_files(target: str) -> List[str]:
+        """Every file any engine would look at: source files plus secret-bearing config."""
+        return BaseScanner.collect_files(
+            target,
+            [*ScannerFactory.all_supported_extensions(), *SecretsDetector.SUPPORTED_EXTENSIONS],
+            SecretsDetector.SUPPORTED_FILE_NAMES,
+        )
 
     # ------------------------------------------------------------------
     # Stages
@@ -92,7 +102,6 @@ class ScanOrchestrator:
                 fraction,
             )
             partial = scanner.scan(target)
-            result.files_scanned += partial.files_scanned
             result.issues.extend(partial.issues)
             self._collect_warnings(scanner.name, partial, result, ScanStage.LANGUAGE_SCAN, fraction)
 

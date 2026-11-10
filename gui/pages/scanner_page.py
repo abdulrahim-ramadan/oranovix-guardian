@@ -40,7 +40,7 @@ from core.language_manager  import LanguageManager
 from core.sound_manager     import SoundManager
 from core.alarm_center      import AlarmCenter, AlarmLevel
 from scanner_engine.factory          import ScannerFactory
-from scanner_engine.base             import BaseScanner, ScanResult, Severity
+from scanner_engine.base             import ScanResult, Severity
 from scanner_engine.orchestrator     import ScanOrchestrator, ScanProgress
 
 
@@ -609,8 +609,7 @@ class ScannerPage(ctk.CTkFrame):
 
     def _collect_scannable_files(self, target: str) -> int:
         """Return count of scannable files under target."""
-        extensions = ScannerFactory.all_supported_extensions()
-        return len(BaseScanner.collect_files(target, extensions))
+        return len(ScanOrchestrator.scannable_files(target))
 
     def _start_scan(self) -> None:
         if self._scanning:

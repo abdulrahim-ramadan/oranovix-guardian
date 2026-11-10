@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from .categories import IssueCategory
 
@@ -30,6 +30,35 @@ EXCLUDED_DIRS: frozenset[str] = frozenset({
     "venv", ".venv", "env", "node_modules", "__pycache__", ".git",
     "dist", "build", "site-packages", "migrations",
 })
+
+
+class FileMatcher:
+    """Decides whether a file name belongs to a scan.
+
+    A name matches when:
+      - its suffix is a wanted extension (``app.py`` for ``.py``), or
+      - the whole name is a wanted extension, optionally followed by more
+        dotted parts (``.env``, ``.env.local``, ``.env.production``), or
+      - it equals a wanted file name, optionally followed by dotted parts
+        (``Dockerfile``, ``Dockerfile.dev``, ``docker-compose.override``).
+
+    ``Path(".env").suffix`` is empty, which is why the suffix alone is not
+    enough for dotfiles.
+    """
+
+    def __init__(self, extensions: Iterable[str], file_names: Iterable[str] = ()) -> None:
+        self._extensions = frozenset(ext.lower() for ext in extensions)
+        self._name_stems = tuple(
+            stem.lower() for stem in (*self._extensions, *file_names)
+        )
+
+    def matches(self, file_name: str) -> bool:
+        name = file_name.lower()
+        if Path(name).suffix in self._extensions:
+            return True
+        return any(
+            name == stem or name.startswith(stem + ".") for stem in self._name_stems
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -526,22 +555,28 @@ class BaseScanner(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def collect_files(target: str, extensions: List[str]) -> List[str]:
-        """Return every file under *target* whose extension is in *extensions*.
+    def collect_files(
+        target: str,
+        extensions: Iterable[str],
+        file_names: Iterable[str] = (),
+    ) -> List[str]:
+        """Return every file under *target* that matches by extension or name.
 
         Directories listed in ``EXCLUDED_DIRS`` are never entered.  A single
-        file passed as *target* is always accepted when its extension matches.
+        file passed as *target* is accepted whenever it matches.  See
+        ``FileMatcher`` for the matching rules (dotfiles such as ``.env``
+        and ``.env.production`` match the ``.env`` extension).
         """
-        wanted = {ext.lower() for ext in extensions}
+        matcher = FileMatcher(extensions, file_names)
         target_path = Path(target)
         if target_path.is_file():
-            return [str(target_path)] if target_path.suffix.lower() in wanted else []
+            return [str(target_path)] if matcher.matches(target_path.name) else []
 
         collected: List[str] = []
         for root, dirs, files in os.walk(target):
             dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]
             for name in files:
-                if Path(name).suffix.lower() in wanted:
+                if matcher.matches(name):
                     collected.append(os.path.join(root, name))
         collected.sort()
         return collected
