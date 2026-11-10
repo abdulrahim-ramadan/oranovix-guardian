@@ -58,10 +58,14 @@ Thumbs.db
 .gemini/
 
 # ── Test artefacts ────────────────────────────────────────────────────────
-test_vuln.*
+/test_vuln.*
 .pytest_cache/
 .coverage
 htmlcov/
 
 # ── Logs ──────────────────────────────────────────────────────────────────
 *.log
+
+# ── Test corpus (intentionally vulnerable fixtures, must stay tracked) ────
+!tests/corpus/**
+tests/corpus/**/__pycache__/
