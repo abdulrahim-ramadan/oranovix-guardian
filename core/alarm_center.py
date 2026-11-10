@@ -6,6 +6,10 @@ scan today, a background monitor later), decides the alarm level,
 skips findings that already triggered an alarm, and hands the alarm to
 its channels (sound, toast, taskbar flash).  It has no GUI dependency:
 channels are injected.
+
+The loud alarm fires once per finding.  A finding that disappears from
+a full scan is forgotten, so it alarms again if it is reintroduced.
+Open criticals stay visible through ``AlarmCenter.open_critical_banner``.
 """
 from __future__ import annotations
 
@@ -74,15 +78,19 @@ class SoundAlarmChannel(AlarmChannel):
 # ---------------------------------------------------------------------------
 
 class SeenFindingStore(ABC):
-    """Remembers which finding IDs already triggered an alarm."""
+    """Remembers which finding IDs already triggered an alarm, per scan root."""
 
     @abstractmethod
     def unseen(self, finding_ids: Sequence[str]) -> Set[str]:
         """Return the subset of *finding_ids* never alarmed before."""
 
     @abstractmethod
-    def mark_seen(self, finding_ids: Sequence[str]) -> None:
-        """Record *finding_ids* as alarmed."""
+    def mark_seen(self, finding_ids: Sequence[str], scan_root: str) -> None:
+        """Record *finding_ids* as alarmed for *scan_root*."""
+
+    @abstractmethod
+    def forget_missing(self, scan_root: str, present_ids: Sequence[str]) -> int:
+        """Drop IDs of *scan_root* that are not in *present_ids*; return how many."""
 
 
 class SqliteSeenFindingStore(SeenFindingStore):
@@ -93,8 +101,14 @@ class SqliteSeenFindingStore(SeenFindingStore):
         with self._connect() as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS alarmed_findings ("
-                "finding_id TEXT PRIMARY KEY, first_alarmed_at TEXT NOT NULL)"
+                "finding_id TEXT PRIMARY KEY, first_alarmed_at TEXT NOT NULL, "
+                "scan_root TEXT NOT NULL DEFAULT '')"
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(alarmed_findings)")}
+            if "scan_root" not in columns:
+                conn.execute(
+                    "ALTER TABLE alarmed_findings ADD COLUMN scan_root TEXT NOT NULL DEFAULT ''"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
@@ -110,13 +124,30 @@ class SqliteSeenFindingStore(SeenFindingStore):
                     remaining.discard(finding_id)
         return remaining
 
-    def mark_seen(self, finding_ids: Sequence[str]) -> None:
+    def mark_seen(self, finding_ids: Sequence[str], scan_root: str) -> None:
         now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.executemany(
-                "INSERT OR IGNORE INTO alarmed_findings VALUES (?, ?)",
-                [(finding_id, now) for finding_id in finding_ids],
+                "INSERT OR IGNORE INTO alarmed_findings "
+                "(finding_id, first_alarmed_at, scan_root) VALUES (?, ?, ?)",
+                [(finding_id, now, scan_root) for finding_id in finding_ids],
             )
+
+    def forget_missing(self, scan_root: str, present_ids: Sequence[str]) -> int:
+        present = set(present_ids)
+        with self._connect() as conn:
+            stored = [
+                row[0] for row in conn.execute(
+                    "SELECT finding_id FROM alarmed_findings WHERE scan_root = ?",
+                    (scan_root,),
+                )
+            ]
+            gone = [finding_id for finding_id in stored if finding_id not in present]
+            conn.executemany(
+                "DELETE FROM alarmed_findings WHERE finding_id = ?",
+                [(finding_id,) for finding_id in gone],
+            )
+        return len(gone)
 
 
 # ---------------------------------------------------------------------------
@@ -140,26 +171,39 @@ class AlarmCenter:
     def add_channel(self, channel: AlarmChannel) -> None:
         self._channels.append(channel)
 
-    def notify(self, findings: Iterable[Issue], scan_root: str = "") -> Optional[Alarm]:
+    def notify(
+        self,
+        findings: Iterable[Issue],
+        scan_root: str = "",
+        full_scan: bool = True,
+    ) -> Optional[Alarm]:
         """Raise an alarm for CRITICAL/HIGH findings not alarmed before.
 
         CRITICAL goes to every channel, HIGH only to channels that accept
         it (the toast); anything lower is ignored.  Returns the alarm, or
         ``None`` when nothing new deserved one.  Thread-safe.
+
+        With *full_scan* the findings are the complete picture of
+        *scan_root*: alarmed findings that are no longer present are
+        forgotten, so they alarm again if they come back.  A monitor that
+        reports only part of a project must pass ``full_scan=False``.
         """
+        root_key = self._root_key(scan_root)
         candidates = {
             self.finding_id(issue, scan_root): issue
             for issue in findings
             if issue.severity in self._ALARM_SEVERITIES
         }
-        if not candidates:
-            return None
 
         with self._lock:
+            if full_scan:
+                self._store.forget_missing(root_key, list(candidates))
+            if not candidates:
+                return None
             new_ids = self._store.unseen(list(candidates))
             if not new_ids:
                 return None
-            self._store.mark_seen(sorted(new_ids))
+            self._store.mark_seen(sorted(new_ids), root_key)
 
         new_issues = [issue for fid, issue in candidates.items() if fid in new_ids]
         alarm = self._build_alarm(new_issues, tuple(sorted(new_ids)))
@@ -172,10 +216,31 @@ class AlarmCenter:
         return alarm
 
     @staticmethod
+    def open_critical_banner(findings: Iterable[Issue]) -> str:
+        """Text for the persistent banner, or ``""`` when no critical is open.
+
+        Unlike ``notify`` this never goes quiet: it reflects every CRITICAL
+        finding of the current scan, seen before or not.
+        """
+        count = sum(1 for issue in findings if issue.severity is Severity.CRITICAL)
+        if count == 0:
+            return ""
+        return LanguageManager().t("critical_open_banner", count=count)
+
+    @staticmethod
+    def _root_key(scan_root: str) -> str:
+        return os.path.normcase(os.path.abspath(scan_root)) if scan_root else ""
+
+    @staticmethod
     def finding_id(issue: Issue, scan_root: str = "") -> str:
-        """Stable ID: sha1 of rule category, path relative to the scan root, line."""
+        """Stable ID: sha1 of rule category, path relative to the scan root, line.
+
+        The scan root is mixed in so the same relative path in two different
+        projects never shares an ID.
+        """
         relative = AlarmCenter._relative_path(issue.file_path, scan_root)
-        raw = f"{issue.category.value}|{relative}|{issue.line_number}"
+        root_key = AlarmCenter._root_key(scan_root)
+        raw = f"{root_key}|{issue.category.value}|{relative}|{issue.line_number}"
         return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     @staticmethod

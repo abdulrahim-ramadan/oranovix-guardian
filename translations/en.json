@@ -177,5 +177,6 @@
   "alarm_critical_title": "CRITICAL security issue found",
   "alarm_high_title": "High severity issue found",
   "alarm_location": "{language} \u00b7 {file}, line {line}: {issue}",
-  "alarm_counts": "New findings per language: {counts}"
+  "alarm_counts": "New findings per language: {counts}",
+  "critical_open_banner": "{count} critical finding(s) still open"
 }

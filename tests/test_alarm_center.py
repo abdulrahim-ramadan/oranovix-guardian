@@ -86,3 +86,61 @@ def test_finding_id_is_stable_and_position_sensitive() -> None:
     assert base == AlarmCenter.finding_id(issue(Severity.HIGH), "/project")
     assert base != AlarmCenter.finding_id(issue(Severity.CRITICAL, line=4), "/project")
     assert len(base) == 40
+
+
+def test_new_finding_alarms_then_rescan_shows_banner_only(db_path: str) -> None:
+    loud = CriticalOnlyChannel()
+    center = AlarmCenter(SqliteSeenFindingStore(db_path), [loud])
+    findings = [issue(Severity.CRITICAL), issue(Severity.CRITICAL, line=8)]
+
+    assert center.notify(findings, "/project") is not None
+    assert len(loud.alarms) == 1
+
+    assert center.notify(findings, "/project") is None
+    assert len(loud.alarms) == 1
+    assert "2" in AlarmCenter.open_critical_banner(findings)
+
+
+def test_banner_is_empty_without_criticals() -> None:
+    assert AlarmCenter.open_critical_banner([issue(Severity.HIGH)]) == ""
+
+
+def test_fixed_then_reintroduced_finding_alarms_again(db_path: str) -> None:
+    loud = CriticalOnlyChannel()
+    center = AlarmCenter(SqliteSeenFindingStore(db_path), [loud])
+    finding = [issue(Severity.CRITICAL)]
+
+    assert center.notify(finding, "/project") is not None
+    assert center.notify([], "/project") is None          # fixed: scan is clean
+    assert center.notify(finding, "/project") is not None  # reintroduced
+    assert len(loud.alarms) == 2
+
+
+def test_partial_report_does_not_forget_other_findings(db_path: str) -> None:
+    center = AlarmCenter(SqliteSeenFindingStore(db_path), [RecordingChannel()])
+    finding = [issue(Severity.CRITICAL)]
+
+    assert center.notify(finding, "/project") is not None
+    assert center.notify([], "/project", full_scan=False) is None
+    assert center.notify(finding, "/project") is None
+
+
+def test_scan_of_another_root_does_not_forget_findings(db_path: str) -> None:
+    center = AlarmCenter(SqliteSeenFindingStore(db_path), [RecordingChannel()])
+    finding = [issue(Severity.CRITICAL)]
+
+    assert center.notify(finding, "/project") is not None
+    assert center.notify([], "/other-project") is None
+    assert center.notify(finding, "/project") is None
+
+
+def test_store_upgrades_a_table_created_without_scan_root(db_path: str) -> None:
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE alarmed_findings ("
+            "finding_id TEXT PRIMARY KEY, first_alarmed_at TEXT NOT NULL)"
+        )
+    center = AlarmCenter(SqliteSeenFindingStore(db_path), [RecordingChannel()])
+    assert center.notify([issue(Severity.CRITICAL)], "/project") is not None

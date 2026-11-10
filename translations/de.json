@@ -151,5 +151,6 @@
   "alarm_critical_title": "KRITISCHE Sicherheitsl\u00fccke gefunden",
   "alarm_high_title": "Sicherheitsproblem mit hohem Schweregrad gefunden",
   "alarm_location": "{language} \u00b7 {file}, Zeile {line}: {issue}",
-  "alarm_counts": "Neue Funde pro Sprache: {counts}"
+  "alarm_counts": "Neue Funde pro Sprache: {counts}",
+  "critical_open_banner": "{count} kritische(r) Fund(e) noch offen"
 }
