@@ -84,15 +84,6 @@ _SECRET_NAME_RE = re.compile(
     re.MULTILINE,
 )
 
-# Matches calls to the built-in open() where the first argument is not a
-# hard-coded string literal, Path(), or bytes literal — the usual indicators
-# of a safe, developer-controlled path.  A dynamic argument may be influenced
-# by user input and therefore constitutes a potential path-traversal risk.
-_OPEN_TRAVERSAL_RE = re.compile(
-    r'\bopen\s*\(\s*(?!["\']|b["\']|rb["\']|Path)(?P<arg>[^,\)]+)',
-    re.MULTILINE,
-)
-
 
 class PythonScanner(BaseScanner):
     """Scanner for Python source files that combines Bandit with custom regex rules.
@@ -202,21 +193,10 @@ class PythonScanner(BaseScanner):
         )
 
     def _extra_checks(self, file_path: str) -> List[Issue]:
-        """Run regex-based security checks that supplement Bandit's analysis.
+        """Regex check for hardcoded credentials (SEC001).
 
-        Reads the entire source file and applies two compiled regex patterns:
-
-        - ``_SECRET_NAME_RE`` (SEC001): detects hardcoded credentials assigned
-          to variables with security-sensitive names.
-        - ``_OPEN_TRAVERSAL_RE`` (SEC002): detects ``open()`` calls whose first
-          argument is a non-literal expression (potential path traversal).
-
-        Args:
-            file_path: Absolute path to the Python source file to analyse.
-
-        Returns:
-            A list of ``Issue`` objects for any findings; empty list if the
-            file cannot be read or no patterns match.
+        The former SEC002 open() path-traversal regex is disabled: it could
+        not tell user input from safe paths.  It will return as a taint rule.
         """
         extra: List[Issue] = []
         try:
@@ -253,36 +233,6 @@ class PythonScanner(BaseScanner):
                 cwe="https://cwe.mitre.org/data/definitions/798.html",
                 confidence="HIGH",
                 category=IssueCategory.SECRET,
-            ))
-
-        # ── Path traversal via open() ──────────────────────────────────
-        for m in _OPEN_TRAVERSAL_RE.finditer(source):
-            arg = m.group("arg").strip()
-            # Skip if the argument looks like a compile-time constant (string
-            # literal, Path() call, or os.* call) – these are safe by default.
-            if re.match(r'^["\']|^Path|^os\.', arg):
-                continue
-            line_num = source[: m.start()].count("\n") + 1
-            snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ""
-            extra.append(Issue(
-                rule_id="SEC002",
-                title="Potential Path Traversal",
-                description=(
-                    f"open() called with non-literal argument '{arg}'. "
-                    "If this value is derived from user input, an attacker "
-                    "can read or overwrite arbitrary files (e.g. ../../etc/passwd)."
-                ),
-                severity=Severity.HIGH,
-                file_path=file_path,
-                line_number=line_num,
-                code_snippet=snippet,
-                recommendation=(
-                    "Validate and sanitize file paths with os.path.abspath() "
-                    "and verify the resolved path starts within an expected "
-                    "base directory before opening the file."
-                ),
-                cwe="https://cwe.mitre.org/data/definitions/22.html",
-                confidence="MEDIUM",
             ))
 
         return extra

@@ -77,6 +77,7 @@ class Rule:
         fix_suggestion: Optional remediation advice shown in the UI.
         is_builtin:     True for default rules; False for user-defined rules.
         category:       IssueCategory value used to merge duplicate findings.
+        exclude_line_pattern: Regex; a match on a line containing it is ignored.
     """
     id: str
     name: str
@@ -88,6 +89,7 @@ class Rule:
     fix_suggestion: str = ""
     is_builtin: bool = False
     category: str = IssueCategory.OTHER.value
+    exclude_line_pattern: str = ""
 
     def category_enum(self) -> IssueCategory:
         return IssueCategory.parse(self.category)
@@ -112,6 +114,7 @@ class Rule:
             "fix_suggestion": self.fix_suggestion,
             "is_builtin": self.is_builtin,
             "category": self.category,
+            "exclude_line_pattern": self.exclude_line_pattern,
         }
 
 
@@ -202,6 +205,7 @@ class RuleEngine:
                     fix_suggestion=item.get("fix_suggestion", ""),
                     is_builtin=builtin,
                     category=item.get("category", IssueCategory.OTHER.value),
+                    exclude_line_pattern=item.get("exclude_line_pattern", ""),
                 ))
             except KeyError:
                 continue  # skip malformed entries
@@ -299,36 +303,47 @@ class RuleEngine:
             List of Issue objects for every pattern match.
         """
         rule_lang = RuleLanguage.from_language(language)
-        lines = code.splitlines()
         issues: List[Issue] = []
-
         for rule in self._rules:
             if not rule.enabled:
                 continue
             if rule.language not in ("ALL", rule_lang.value):
                 continue
+            issues.extend(self._apply_rule(rule, code, file_path))
+        return issues
 
-            try:
-                compiled = re.compile(rule.pattern, re.MULTILINE | re.IGNORECASE)
-            except re.error:
-                continue   # skip rules with invalid patterns
+    @staticmethod
+    def _apply_rule(rule: Rule, code: str, file_path: str) -> List[Issue]:
+        """Return one Issue per match of *rule*, honouring its line exclusion."""
+        flags = re.MULTILINE | re.IGNORECASE
+        try:
+            compiled = re.compile(rule.pattern, flags)
+            excluded = (
+                re.compile(rule.exclude_line_pattern, flags)
+                if rule.exclude_line_pattern else None
+            )
+        except re.error:
+            return []
 
-            for match in compiled.finditer(code):
-                line_num = code[: match.start()].count("\n") + 1
-                snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ""
-                issues.append(Issue(
-                    rule_id=rule.id,
-                    title=rule.name,
-                    description=rule.description,
-                    severity=rule.severity_enum(),
-                    file_path=file_path,
-                    line_number=line_num,
-                    code_snippet=snippet,
-                    recommendation=rule.fix_suggestion,
-                    confidence="MEDIUM",
-                    category=rule.category_enum(),
-                ))
-
+        lines = code.splitlines()
+        issues: List[Issue] = []
+        for match in compiled.finditer(code):
+            line_num = code[: match.start()].count("\n") + 1
+            line = lines[line_num - 1] if line_num <= len(lines) else ""
+            if excluded and excluded.search(line):
+                continue
+            issues.append(Issue(
+                rule_id=rule.id,
+                title=rule.name,
+                description=rule.description,
+                severity=rule.severity_enum(),
+                file_path=file_path,
+                line_number=line_num,
+                code_snippet=line.strip(),
+                recommendation=rule.fix_suggestion,
+                confidence="MEDIUM",
+                category=rule.category_enum(),
+            ))
         return issues
 
     def scan_file(self, file_path: str, language: Language) -> List[Issue]:
@@ -357,29 +372,7 @@ class RuleEngine:
         Returns:
             List of Issues the rule would generate on the sample.
         """
-        try:
-            compiled = re.compile(rule.pattern, re.MULTILINE | re.IGNORECASE)
-        except re.error:
-            return []
-
-        lines = sample_code.splitlines()
-        issues: List[Issue] = []
-        for match in compiled.finditer(sample_code):
-            line_num = sample_code[: match.start()].count("\n") + 1
-            snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ""
-            issues.append(Issue(
-                rule_id=rule.id,
-                title=rule.name,
-                description=rule.description,
-                severity=rule.severity_enum(),
-                file_path="<test>",
-                line_number=line_num,
-                code_snippet=snippet,
-                recommendation=rule.fix_suggestion,
-                confidence="MEDIUM",
-                category=rule.category_enum(),
-            ))
-        return issues
+        return self._apply_rule(rule, sample_code, "<test>")
 
     # ------------------------------------------------------------------
     # Import / Export

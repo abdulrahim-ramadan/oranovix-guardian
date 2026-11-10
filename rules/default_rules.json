@@ -16,13 +16,14 @@
       "id": "RULE-002",
       "name": "Hardcoded IP Address",
       "description": "A hardcoded IP address is embedded in source code. This can expose internal infrastructure topology and makes configuration inflexible.",
-      "pattern": "(?<![\\d.])(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?![\\d.])",
+      "pattern": "(?<![\\d.])(?!(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0)(?![\\d.]))(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?![\\d.])",
       "severity": "LOW",
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Move hardcoded IP addresses to configuration files or environment variables so they can be changed without code modifications.",
       "is_builtin": true,
-      "category": "network"
+      "category": "network",
+      "exclude_line_pattern": "version"
     },
     {
       "id": "RULE-003",
