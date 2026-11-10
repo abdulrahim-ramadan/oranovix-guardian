@@ -147,5 +147,9 @@
   "engine_warning": "Engine-Warnung",
   "engine_warnings_title": "Engine-Warnungen \u2014 Ergebnisse k\u00f6nnen unvollst\u00e4ndig sein",
   "scan_done_with_warnings": "Scan mit {count} Engine-Warnung(en) beendet \u2014 Ergebnisse k\u00f6nnen unvollst\u00e4ndig sein",
-  "status_with_warnings": "mit Warnungen"
+  "status_with_warnings": "mit Warnungen",
+  "alarm_critical_title": "KRITISCHE Sicherheitsl\u00fccke gefunden",
+  "alarm_high_title": "Sicherheitsproblem mit hohem Schweregrad gefunden",
+  "alarm_location": "{language} \u00b7 {file}, Zeile {line}: {issue}",
+  "alarm_counts": "Neue Funde pro Sprache: {counts}"
 }

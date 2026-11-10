@@ -186,6 +186,11 @@ class Issue:
         return os.path.basename(self.file_path)
 
     @property
+    def language(self) -> "Language":
+        """Programming language inferred from the file extension."""
+        return Language.from_extension(Path(self.file_path).suffix)
+
+    @property
     def severity_label(self) -> str:
         """Return the string value of the severity enum (e.g. ``"HIGH"``).
 

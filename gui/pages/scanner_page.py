@@ -38,6 +38,7 @@ from gui.animation_manager  import AnimationManager
 from gui.asset_helper       import get_asset_path
 from core.language_manager  import LanguageManager
 from core.sound_manager     import SoundManager
+from core.alarm_center      import AlarmCenter, AlarmLevel
 from scanner_engine.factory          import ScannerFactory
 from scanner_engine.base             import BaseScanner, ScanResult, Severity
 from scanner_engine.orchestrator     import ScanOrchestrator, ScanProgress
@@ -464,10 +465,12 @@ class ScannerPage(ctk.CTkFrame):
         master,
         on_scan_complete: Callable[[ScanResult], None],
         on_status: Callable[[str, str], None],
+        alarm_center: Optional[AlarmCenter] = None,
         **kwargs,
     ) -> None:
         tm = ThemeManager()
         super().__init__(master, fg_color=tm.c("bg"), corner_radius=0, **kwargs)
+        self._alarm_center = alarm_center
         self._on_complete = on_scan_complete
         self._on_status   = on_status
         self._target: str  = ""
@@ -739,19 +742,21 @@ class ScannerPage(ctk.CTkFrame):
         # Hand off to results page
         self._on_complete(result)
 
-        # Sound alert based on severity
-        sm = SoundManager()
-        if result.critical_count > 0:
-            sm.play("critical")
-        else:
-            sm.play("complete")
-
-        AnimationManager.show_toast(
-            self.winfo_toplevel(),
-            f"✓  Scan done — {result.total_issues} issue(s)  |  "
-            f"Score: {result.risk_score}/100  [{result.severity_counts_label}]",
-            color=tm.c("success") if result.total_issues == 0 else tm.c("warning"),
+        # The alarm center owns critical/high alerts; it stays silent for
+        # findings it has already announced.
+        alarm = (
+            self._alarm_center.notify(result.issues, result.target_path)
+            if self._alarm_center else None
         )
+        if alarm is None or alarm.level is not AlarmLevel.CRITICAL:
+            SoundManager().play("complete")
+        if alarm is None:
+            AnimationManager.show_toast(
+                self.winfo_toplevel(),
+                f"✓  Scan done — {result.total_issues} issue(s)  |  "
+                f"Score: {result.risk_score}/100  [{result.severity_counts_label}]",
+                color=tm.c("success") if result.total_issues == 0 else tm.c("warning"),
+            )
 
     def refresh_theme(self) -> None:
         tm = ThemeManager()
