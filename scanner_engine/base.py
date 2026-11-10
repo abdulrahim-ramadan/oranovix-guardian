@@ -23,6 +23,13 @@ from pathlib import Path
 from typing import List, Optional
 
 
+# Third-party and generated folders that no engine should scan.
+EXCLUDED_DIRS: frozenset[str] = frozenset({
+    "venv", ".venv", "env", "node_modules", "__pycache__", ".git",
+    "dist", "build", "site-packages", "migrations",
+})
+
+
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
@@ -119,6 +126,9 @@ class Language(Enum):
             ".py":   cls.PYTHON,
             ".js":   cls.JAVASCRIPT,
             ".ts":   cls.JAVASCRIPT,
+            ".jsx":  cls.JAVASCRIPT,
+            ".tsx":  cls.JAVASCRIPT,
+            ".mjs":  cls.JAVASCRIPT,
             ".php":  cls.PHP,
             ".java": cls.JAVA,
             ".cs":   cls.CSHARP,
@@ -494,31 +504,21 @@ class BaseScanner(ABC):
 
     @staticmethod
     def collect_files(target: str, extensions: List[str]) -> List[str]:
-        """Recursively collect all files matching *extensions* under *target*.
+        """Return every file under *target* whose extension is in *extensions*.
 
-        If *target* is a single file and its extension is in *extensions*, that
-        file alone is returned.  If *target* is a directory, the method walks
-        the entire tree and returns every file whose extension matches.
-
-        Args:
-            target: Absolute path to a file or directory.
-            extensions: List of lowercase extensions to match, including the
-                leading dot (e.g. ``[".py", ".pyw"]``).
-
-        Returns:
-            A list of absolute path strings for every matching file found.
-            Returns an empty list if no files match or the target does not exist.
+        Directories listed in ``EXCLUDED_DIRS`` are never entered.  A single
+        file passed as *target* is always accepted when its extension matches.
         """
-        collected: List[str] = []
+        wanted = {ext.lower() for ext in extensions}
         target_path = Path(target)
         if target_path.is_file():
-            # Single-file target: include it only if its extension matches
-            if target_path.suffix.lower() in extensions:
-                collected.append(str(target_path))
-        elif target_path.is_dir():
-            # Directory target: walk the tree once per extension using rglob
-            for ext in extensions:
-                collected.extend(
-                    str(p) for p in target_path.rglob(f"*{ext}")
-                )
+            return [str(target_path)] if target_path.suffix.lower() in wanted else []
+
+        collected: List[str] = []
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]
+            for name in files:
+                if Path(name).suffix.lower() in wanted:
+                    collected.append(os.path.join(root, name))
+        collected.sort()
         return collected

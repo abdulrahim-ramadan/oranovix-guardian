@@ -182,7 +182,11 @@ class PythonScanner(BaseScanner):
 
         # Run Bandit over the whole target at once and translate its output
         raw = self._run_bandit(target)
-        issues = self._parse_bandit_output(raw)
+        allowed = {os.path.normcase(os.path.abspath(f)) for f in files}
+        issues = [
+            issue for issue in self._parse_bandit_output(raw)
+            if os.path.normcase(os.path.abspath(issue.file_path)) in allowed
+        ]
         result.issues.extend(issues)
 
         # Track (rule_id, file_path, line_number) to avoid duplicates

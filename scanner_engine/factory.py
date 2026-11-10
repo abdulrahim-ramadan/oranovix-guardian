@@ -16,7 +16,6 @@ Version: 1.1.0
 """
 from __future__ import annotations
 
-import os
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -128,12 +127,10 @@ class ScannerFactory:
             return scanner if scanner else PythonScanner()
 
         # Directory path: count known source-file extensions to find the dominant language
-        ext_counts: Counter = Counter()
-        for root, _, files in os.walk(target):
-            for f in files:
-                suffix = Path(f).suffix.lower()
-                if suffix in (".py", ".php", ".java", ".cs", ".js", ".ts"):
-                    ext_counts[suffix] += 1
+        ext_counts: Counter = Counter(
+            Path(f).suffix.lower()
+            for f in BaseScanner.collect_files(target, cls.all_supported_extensions())
+        )
 
         if not ext_counts:
             # No recognised source files found – default to Python scanner
@@ -172,7 +169,11 @@ class ScannerFactory:
             A list of lowercase extension strings including the leading dot
             (e.g. ``[".py", ".php", ".java", ".cs", ".js", ".ts"]``).
         """
-        return [".py", ".php", ".java", ".cs", ".js", ".ts"]
+        extensions: list[str] = []
+        for klass in cls._MAP.values():
+            if klass is not None:
+                extensions.extend(klass.SUPPORTED_EXTENSIONS)
+        return extensions
 
     @classmethod
     def all_scanners(cls) -> list[BaseScanner]:

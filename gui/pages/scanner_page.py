@@ -39,7 +39,7 @@ from gui.asset_helper       import get_asset_path
 from core.language_manager  import LanguageManager
 from core.sound_manager     import SoundManager
 from scanner_engine.factory          import ScannerFactory
-from scanner_engine.base             import ScanResult, Severity
+from scanner_engine.base             import BaseScanner, ScanResult, Severity
 from scanner_engine.orchestrator     import ScanOrchestrator, ScanProgress
 
 
@@ -606,15 +606,8 @@ class ScannerPage(ctk.CTkFrame):
 
     def _collect_scannable_files(self, target: str) -> int:
         """Return count of scannable files under target."""
-        exts = set(ScannerFactory.all_supported_extensions())
-        if os.path.isfile(target):
-            return 1 if os.path.splitext(target)[1].lower() in exts else 0
-        count = 0
-        for root, _, files in os.walk(target):
-            for f in files:
-                if os.path.splitext(f)[1].lower() in exts:
-                    count += 1
-        return count
+        extensions = ScannerFactory.all_supported_extensions()
+        return len(BaseScanner.collect_files(target, extensions))
 
     def _start_scan(self) -> None:
         if self._scanning:
