@@ -552,7 +552,10 @@ class PDFReportGenerator:
             Table(
                 [[
                     Paragraph(str(result.risk_score), S["risk_label"]),
-                    Paragraph(f"/100\n{result.risk_label}", S["subtitle"]),
+                    Paragraph(
+                        f"/100  {result.risk_label}<br/>{result.severity_counts_label}",
+                        S["subtitle"],
+                    ),
                 ]],
                 colWidths=[40 * mm, 80 * mm],
                 style=TableStyle([

@@ -716,7 +716,8 @@ class ScannerPage(ctk.CTkFrame):
 
         self._log.append(
             f"Scan done. Score: {result.risk_score}/100 "
-            f"({result.risk_label}) — {result.total_issues} issue(s)",
+            f"({result.risk_label}) — {result.total_issues} issue(s)  "
+            f"[{result.severity_counts_label}]",
             "done",
         )
 
@@ -731,7 +732,7 @@ class ScannerPage(ctk.CTkFrame):
         else:
             self._on_status(
                 f"✓  Scan complete — {result.total_issues} issue(s)  |  "
-                f"risk {result.risk_score}/100",
+                f"risk {result.risk_score}/100  [{result.severity_counts_label}]",
                 "ok",
             )
 
@@ -748,7 +749,7 @@ class ScannerPage(ctk.CTkFrame):
         AnimationManager.show_toast(
             self.winfo_toplevel(),
             f"✓  Scan done — {result.total_issues} issue(s)  |  "
-            f"Score: {result.risk_score}/100",
+            f"Score: {result.risk_score}/100  [{result.severity_counts_label}]",
             color=tm.c("success") if result.total_issues == 0 else tm.c("warning"),
         )
 

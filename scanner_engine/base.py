@@ -304,23 +304,27 @@ class ScanResult:
 
     @property
     def risk_score(self) -> int:
-        """Compute a composite risk score in the range 0–100 (higher = more dangerous).
+        """Risk score 0-100 that approaches 100 without saturating early.
 
-        Each severity tier is weighted differently to reflect its real-world
-        impact: CRITICAL issues have the largest influence (×40), followed by
-        HIGH (×20), MEDIUM (×5), and LOW (×1).  The result is capped at 100 so
-        the UI can treat it as a percentage.
-
-        Returns:
-            An integer between 0 and 100 inclusive.
+        ``weighted = 40*C + 20*H + 5*M + 1*L`` and every 40 weighted points
+        halve the remaining distance to 100, so 3 criticals (88) still
+        score lower than 10 criticals (100).
         """
-        score = (
-            self.critical_count * 40   # critical issues dominate the score
+        weighted = (
+            self.critical_count * 40
             + self.high_count * 20
             + self.medium_count * 5
             + self.low_count * 1
         )
-        return min(score, 100)   # cap at 100 to keep the score bounded
+        return round(100 * (1 - 0.5 ** (weighted / 40)))
+
+    @property
+    def severity_counts_label(self) -> str:
+        """Raw counts shown next to the score, e.g. ``C:3 H:1 M:0 L:2``."""
+        return (
+            f"C:{self.critical_count} H:{self.high_count} "
+            f"M:{self.medium_count} L:{self.low_count}"
+        )
 
     @property
     def risk_label(self) -> str:
