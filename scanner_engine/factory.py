@@ -145,6 +145,21 @@ class ScannerFactory:
         scanner = cls.for_path(f"dummy{dominant_ext}")
         return scanner if scanner else PythonScanner()
 
+    @classmethod
+    def scanners_for_target(cls, target: str) -> list[BaseScanner]:
+        """Return one scanner per language that has files under *target*.
+
+        Unlike ``for_target`` this never drops a minority language: a
+        Python project containing JavaScript files gets both scanners.
+        """
+        scanners: list[BaseScanner] = []
+        for klass in cls._MAP.values():
+            if klass is None:
+                continue
+            if BaseScanner.collect_files(target, klass.SUPPORTED_EXTENSIONS):
+                scanners.append(klass())
+        return scanners
+
     # ------------------------------------------------------------------
     # Introspection helpers
     # ------------------------------------------------------------------

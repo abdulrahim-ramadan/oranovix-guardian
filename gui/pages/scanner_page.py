@@ -39,9 +39,8 @@ from gui.asset_helper       import get_asset_path
 from core.language_manager  import LanguageManager
 from core.sound_manager     import SoundManager
 from scanner_engine.factory          import ScannerFactory
-from scanner_engine.base             import ScanResult, Issue, Severity, Language
-from scanner_engine.secrets_detector import SecretsDetector
-from scanner_engine.rule_engine      import RuleEngine
+from scanner_engine.base             import ScanResult, Severity
+from scanner_engine.orchestrator     import ScanOrchestrator, ScanProgress
 
 
 # ── Live Log Console ──────────────────────────────────────────────────────
@@ -591,13 +590,13 @@ class ScannerPage(ctk.CTkFrame):
         self._log.append(f"Target set: {path}", "ok")
 
         # Detect language and report
-        scanner = ScannerFactory.for_target(path)
-        lang_name = scanner.language.value if scanner else "Unknown"
-        files = ScannerFactory.all_supported_extensions()
+        scanners = ScannerFactory.scanners_for_target(path)
+        lang_names = ", ".join(s.language.value for s in scanners) or "Unknown"
+        engine_names = ", ".join(s.name for s in scanners) or "N/A"
         count = self._collect_scannable_files(path)
         self._log.append(
-            f"{lm.t('detected_language')} {lang_name}  |  "
-            f"{lm.t('scan_engine')} {scanner.name if scanner else 'N/A'}",
+            f"{lm.t('detected_language')} {lang_names}  |  "
+            f"{lm.t('scan_engine')} {engine_names}",
             "info",
         )
         if count:
@@ -661,106 +660,22 @@ class ScannerPage(ctk.CTkFrame):
         thread.start()
 
     def _run_scan(self) -> None:
-        """Background thread: language scan + secrets detection + rule engine."""
+        """Background thread: run the orchestrator and hand the result to the UI."""
         try:
-            scanner = ScannerFactory.for_target(self._target)
-            self.after(0, lambda: self._log.append(
-                f"Engine: {scanner.name}  \u2014  scanning {self._target}", "scan"
-            ))
-            AnimationManager.animate_progress(self, self._progress, 0.4, duration_ms=300)
-
-            # ── Phase 1: language-specific scan (Bandit / regex / AST) ────
-            result = scanner.scan(self._target)
-
-            # De-dup set: (rule_id, file_path, line_number)
-            seen: set = {
-                (i.rule_id, i.file_path, i.line_number) for i in result.issues
-            }
-
-            # ── Phase 2: secrets detection on ALL file types ──────────────
-            self.after(0, lambda: self._log.append(
-                "Running Secrets Detector on all files...", "scan"
-            ))
-            AnimationManager.animate_progress(self, self._progress, 0.65, duration_ms=200)
-            try:
-                secrets_result = SecretsDetector().scan(self._target)
-                added = 0
-                for issue in secrets_result.issues:
-                    key = (issue.rule_id, issue.file_path, issue.line_number)
-                    if key not in seen:
-                        result.issues.append(issue)
-                        seen.add(key)
-                        added += 1
-                if added:
-                    self.after(0, lambda n=added: self._log.append(
-                        f"Secrets Detector: {n} secret(s) found.", "found"
-                    ))
-                else:
-                    self.after(0, lambda: self._log.append(
-                        "Secrets Detector: no hardcoded secrets found.", "ok"
-                    ))
-            except Exception as sec_exc:
-                self.after(0, lambda e=sec_exc: self._log.append(
-                    f"Secrets Detector error: {e}", "error"
-                ))
-
-            # ── Phase 3: custom rule engine ───────────────────────────────
-            AnimationManager.animate_progress(self, self._progress, 0.85, duration_ms=200)
-            try:
-                engine = RuleEngine()
-                active_rules = [r for r in engine.rules if r.enabled]
-                if active_rules:
-                    self.after(0, lambda n=len(active_rules): self._log.append(
-                        f"Rule Engine: applying {n} rule(s)...", "scan"
-                    ))
-                    rule_issues = self._run_rule_engine(engine, seen)
-                    for issue in rule_issues:
-                        result.issues.append(issue)
-                    if rule_issues:
-                        self.after(0, lambda n=len(rule_issues): self._log.append(
-                            f"Rule Engine: {n} additional finding(s).", "found"
-                        ))
-            except Exception as re_exc:
-                self.after(0, lambda e=re_exc: self._log.append(
-                    f"Rule Engine error: {e}", "error"
-                ))
-
+            result = ScanOrchestrator(on_progress=self._on_scan_progress).scan(self._target)
             self.after(0, self._scan_done, result, None)
         except Exception as exc:
             self.after(0, self._scan_done, None, str(exc))
 
-    def _run_rule_engine(self, engine: RuleEngine, seen: set) -> list:
-        """Run the rule engine on all supported files under the target.
+    def _on_scan_progress(self, progress: ScanProgress) -> None:
+        """Called from the scan thread; marshals the update onto the UI thread."""
+        self.after(0, self._show_scan_progress, progress)
 
-        Args:
-            engine: Initialised RuleEngine instance.
-            seen:   Set of (rule_id, file_path, line_number) tuples already found.
-
-        Returns:
-            List of new Issue objects not present in seen.
-        """
-        all_exts = set(ScannerFactory.all_supported_extensions())
-        files: list = []
-        from pathlib import Path as _Path
-        p = _Path(self._target)
-        if p.is_file():
-            files = [str(p)] if p.suffix.lower() in all_exts else []
-        else:
-            for root, _, fnames in os.walk(self._target):
-                for fname in fnames:
-                    if os.path.splitext(fname)[1].lower() in all_exts:
-                        files.append(os.path.join(root, fname))
-
-        new_issues: list = []
-        for file_path in files:
-            ext = os.path.splitext(file_path)[1].lower()
-            lang = Language.from_extension(ext)
-            for issue in engine.scan_file(file_path, lang):
-                key = (issue.rule_id, issue.file_path, issue.line_number)
-                if key not in seen:
-                    new_issues.append(issue)
-                    seen.add(key)
-        return new_issues
+    def _show_scan_progress(self, progress: ScanProgress) -> None:
+        self._log.append(progress.message, progress.level)
+        AnimationManager.animate_progress(
+            self, self._progress, progress.fraction, duration_ms=200
+        )
 
     def _scan_done(
         self, result: Optional[ScanResult], error: Optional[str]
