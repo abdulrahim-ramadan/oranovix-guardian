@@ -7,6 +7,10 @@ skips findings that already triggered an alarm, and hands the alarm to
 its channels (sound, toast, taskbar flash).  It has no GUI dependency:
 channels are injected.
 
+Sound and taskbar flash are reserved for CRITICAL findings the engine is
+confident about.  A low-confidence finding ("needs review") is shown,
+never sounded.
+
 The loud alarm fires once per finding.  A finding that disappears from
 a full scan is forgotten, so it alarms again if it is reintroduced.
 Open criticals stay visible through ``AlarmCenter.open_critical_banner``.
@@ -48,6 +52,7 @@ class Alarm:
     worst_issue: Issue
     counts_by_language: Dict[str, int]
     finding_ids: Tuple[str, ...]
+    needs_review: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +70,7 @@ class AlarmChannel(ABC):
 
 
 class SoundAlarmChannel(AlarmChannel):
-    """Plays the critical tone; silent for HIGH."""
+    """Plays the critical tone; silent for HIGH and for low-confidence findings."""
 
     levels = frozenset({AlarmLevel.CRITICAL})
 
@@ -179,9 +184,11 @@ class AlarmCenter:
     ) -> Optional[Alarm]:
         """Raise an alarm for CRITICAL/HIGH findings not alarmed before.
 
-        CRITICAL goes to every channel, HIGH only to channels that accept
-        it (the toast); anything lower is ignored.  Returns the alarm, or
-        ``None`` when nothing new deserved one.  Thread-safe.
+        A confident CRITICAL goes to every channel.  HIGH, and CRITICAL
+        with LOW confidence, go only to channels that accept the HIGH
+        level (the toast), so they never play a sound.  Anything lower is
+        ignored.  Returns the alarm, or ``None`` when nothing new deserved
+        one.  Thread-safe.
 
         With *full_scan* the findings are the complete picture of
         *scan_root*: alarmed findings that are no longer present are
@@ -255,19 +262,26 @@ class AlarmCenter:
     @staticmethod
     def _build_alarm(new_issues: List[Issue], finding_ids: Tuple[str, ...]) -> Alarm:
         lm = LanguageManager()
-        worst = max(new_issues, key=lambda issue: issue.severity.weight)
-        is_critical = worst.severity is Severity.CRITICAL
+        worst = max(
+            new_issues, key=lambda issue: (not issue.needs_review, issue.severity.weight)
+        )
+        is_critical = worst.severity is Severity.CRITICAL and not worst.needs_review
         level = AlarmLevel.CRITICAL if is_critical else AlarmLevel.HIGH
         counts = dict(Counter(issue.language.value for issue in new_issues))
         counts_text = ", ".join(f"{name} {count}" for name, count in counts.items())
 
-        title = lm.t("alarm_critical_title" if is_critical else "alarm_high_title")
+        if is_critical:
+            title = lm.t("alarm_critical_title")
+        elif worst.needs_review:
+            title = lm.t("alarm_review_title")
+        else:
+            title = lm.t("alarm_high_title")
         location = lm.t(
             "alarm_location",
             language=worst.language.value,
             file=worst.filename,
             line=worst.line_number,
-            issue=worst.title,
+            issue=lm.rule_title((worst.rule_id, *worst.also_detected_by), worst.title),
         )
         message = f"{title}\n{location}\n{lm.t('alarm_counts', counts=counts_text)}"
         return Alarm(
@@ -277,4 +291,5 @@ class AlarmCenter:
             worst_issue=worst,
             counts_by_language=counts,
             finding_ids=finding_ids,
+            needs_review=worst.needs_review,
         )

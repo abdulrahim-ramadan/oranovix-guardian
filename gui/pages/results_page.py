@@ -561,7 +561,15 @@ class IssueAccordion(ctk.CTkFrame):
                      font=ctk.CTkFont(size=9, weight="bold"),
                      text_color="#ffffff").pack(side="left", padx=(0, 8))
 
-        ctk.CTkLabel(hdr, text=issue.title,
+        if issue.needs_review:
+            ctk.CTkLabel(hdr,
+                         text=f" {lm.t('needs_review')} ",
+                         fg_color=tm.c("warning"), corner_radius=4,
+                         font=ctk.CTkFont(size=9, weight="bold"),
+                         text_color="#ffffff").pack(side="left", padx=(0, 8))
+
+        title = lm.rule_title((issue.rule_id, *issue.also_detected_by), issue.title)
+        ctk.CTkLabel(hdr, text=title,
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=tm.c("text"), fg_color="transparent",
                      anchor="w").pack(side="left", fill="x", expand=True)
@@ -611,6 +619,9 @@ class IssueAccordion(ctk.CTkFrame):
                          corner_radius=4, anchor="w", justify="left",
                          wraplength=560).pack(fill="x", padx=16, pady=(2, 4))
 
+        if issue.needs_review:
+            _row("\U0001f50d", lm.t("needs_review"), lm.t("needs_review_hint"),
+                 tm.c("warning"))
         if issue.description:
             _row("\U0001f4cb", lm.t("vulnerability"), issue.description)
         if issue.what_is_it:

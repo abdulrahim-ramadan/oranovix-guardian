@@ -233,6 +233,11 @@ class Issue:
         return self.severity.value
 
     @property
+    def needs_review(self) -> bool:
+        """Low-confidence finding: shown with a badge, never announced by sound."""
+        return str(self.confidence).upper() == "LOW"
+
+    @property
     def rule_ids_label(self) -> str:
         """Primary rule ID followed by the rules merged into this issue."""
         if not self.also_detected_by:

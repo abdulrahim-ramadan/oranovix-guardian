@@ -15,7 +15,7 @@ import json
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Set
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +120,15 @@ class LanguageManager:
             except (KeyError, IndexError):
                 pass
         return text
+
+    def rule_title(self, rule_ids: Iterable[str], fallback: str) -> str:
+        """Translated title of the first rule in *rule_ids* that has one."""
+        for rule_id in rule_ids:
+            key = f"rule_title_{rule_id}"
+            text = self.t(key)
+            if text != key:
+                return text
+        return fallback
 
     # ── Layout direction helpers ──────────────────────────────────────────
 
