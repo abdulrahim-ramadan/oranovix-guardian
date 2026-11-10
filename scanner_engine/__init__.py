@@ -12,6 +12,10 @@ from .secrets_detector import SecretsDetector, SecretPattern
 from .ast_analyzer import ASTAnalyzer, ASTRule
 from .ai_fix_generator import AIFixGenerator, OfflineFixDatabase, FixSuggestion
 from .rule_engine import RuleEngine, Rule, RuleLanguage
+from .taint import TaintTracker
+from .django_rules import DjangoAnalyzer, DjangoRule
+from .django_settings_rules import DjangoSettingsAnalyzer, DjangoSettingsRule
+from .django_template_rules import DjangoTemplateScanner, DjangoTemplateRule
 
 __all__ = [
     "Severity", "Issue", "ScanResult", "BaseScanner", "Language",
@@ -23,4 +27,7 @@ __all__ = [
     "ASTAnalyzer", "ASTRule",
     "AIFixGenerator", "OfflineFixDatabase", "FixSuggestion",
     "RuleEngine", "Rule", "RuleLanguage",
+    "TaintTracker", "DjangoAnalyzer", "DjangoRule",
+    "DjangoSettingsAnalyzer", "DjangoSettingsRule",
+    "DjangoTemplateScanner", "DjangoTemplateRule",
 ]

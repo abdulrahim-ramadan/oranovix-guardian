@@ -2,8 +2,8 @@
 Runs every scan engine against one target and merges the output.
 
 ``ScanOrchestrator`` is the single entry point for a full scan: one
-scanner per language found in the target, then the secrets detector,
-then the rule engine.  The GUI only calls ``scan`` and renders progress.
+scanner per language found in the target, then the Django template
+scanner, the secrets detector and the rule engine.  The GUI only calls ``scan`` and renders progress.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from .base import BaseScanner, Language, ScanResult, ScanStatus
+from .django_template_rules import DjangoTemplateScanner
 from .factory import ScannerFactory
 from .issue_merger import IssueMerger
 from .rule_engine import RuleEngine
@@ -25,6 +26,7 @@ class ScanStage(Enum):
     """Phases of a full scan, in execution order."""
 
     LANGUAGE_SCAN = "language_scan"
+    TEMPLATES = "templates"
     SECRETS = "secrets"
     RULES = "rules"
     FINISHED = "finished"
@@ -44,15 +46,17 @@ ProgressListener = Callable[[ScanProgress], None]
 
 
 class ScanOrchestrator:
-    """Coordinates language scanners, secrets detection and custom rules."""
+    """Coordinates language scanners, template rules, secrets and custom rules."""
 
     def __init__(
         self,
         secrets_detector: Optional[BaseScanner] = None,
         rule_engine: Optional[RuleEngine] = None,
         on_progress: Optional[ProgressListener] = None,
+        template_scanner: Optional[BaseScanner] = None,
     ) -> None:
         self._secrets_detector = secrets_detector or SecretsDetector()
+        self._template_scanner = template_scanner or DjangoTemplateScanner()
         self._rule_engine = rule_engine
         self._on_progress = on_progress
         self._merger = IssueMerger()
@@ -68,6 +72,7 @@ class ScanOrchestrator:
         result.scanner_name = " + ".join(s.name for s in scanners) or "No language scanner"
 
         self._run_language_scanners(scanners, target, result)
+        self._run_template_scanner(target, result)
         self._run_secrets_detector(target, result)
         self._run_rule_engine(target, result)
 
@@ -83,7 +88,11 @@ class ScanOrchestrator:
         """Every file any engine would look at: source files plus secret-bearing config."""
         return BaseScanner.collect_files(
             target,
-            [*ScannerFactory.all_supported_extensions(), *SecretsDetector.SUPPORTED_EXTENSIONS],
+            [
+                *ScannerFactory.all_supported_extensions(),
+                *SecretsDetector.SUPPORTED_EXTENSIONS,
+                *DjangoTemplateScanner.SUPPORTED_EXTENSIONS,
+            ],
             SecretsDetector.SUPPORTED_FILE_NAMES,
         )
 
@@ -104,6 +113,15 @@ class ScanOrchestrator:
             partial = scanner.scan(target)
             result.issues.extend(partial.issues)
             self._collect_warnings(scanner.name, partial, result, ScanStage.LANGUAGE_SCAN, fraction)
+
+    def _run_template_scanner(self, target: str, result: ScanResult) -> None:
+        scanner = self._template_scanner
+        if not BaseScanner.collect_files(target, DjangoTemplateScanner.SUPPORTED_EXTENSIONS):
+            return
+        self._report(ScanStage.TEMPLATES, f"Engine: {scanner.name}", 0.62)
+        partial = scanner.scan(target)
+        result.issues.extend(partial.issues)
+        self._collect_warnings(scanner.name, partial, result, ScanStage.TEMPLATES, 0.62)
 
     def _run_secrets_detector(self, target: str, result: ScanResult) -> None:
         self._report(ScanStage.SECRETS, "Running Secrets Detector on all files...", 0.65)

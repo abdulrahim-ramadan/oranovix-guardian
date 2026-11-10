@@ -71,6 +71,7 @@ RULE_CATEGORIES: dict[str, IssueCategory] = {
     "B308": _C.XSS, "B701": _C.XSS, "B702": _C.XSS, "B703": _C.XSS,
     "B201": _C.DEBUG, "B202": _C.DEBUG,
     "B104": _C.NETWORK,
+    "B310": _C.SSRF,
     # Python regex checks
     "SEC001": _C.SECRET,
     # JavaScript / TypeScript
