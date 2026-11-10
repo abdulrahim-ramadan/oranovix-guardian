@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+  {# never use bio|safe or autoescape off here #}
+  <h1>{{ user.display_name }}</h1>
+  <div class="bio">{{ profile.bio|linebreaks }}</div>
+  <p>Keep your account safe: never share your password.</p>
+  {% autoescape on %}
+    <div class="signature">{{ profile.signature|truncatechars:80 }}</div>
+  {% endautoescape %}
+  <ul>{{ profile.tags|join:", " }}</ul>
+</body>
+</html>
