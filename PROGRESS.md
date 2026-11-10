@@ -16,6 +16,17 @@ Goal: make the scan engine trustworthy before adding features. Engine first, UI 
 | 8 | pytest suite (no GUI) with a vulnerable corpus in `tests/corpus/`. Run: `venv\Scripts\python -m pytest`. | `tests/`, `pytest.ini`, `src/requirements-dev.txt` |
 | 9 | Repo cleanup: `release/` untracked and ignored; Gemini model read from `settings.json` (`gemini_model`, default `gemini-flash-latest`); a 404 gives a clear message. | `.gitignore`, `scanner_engine/gemini_config.py` |
 
+### Follow-up fixes
+
+| Fix | Change | Main files |
+|-----|--------|-----------|
+| 1 | Dotfiles are scanned again. `FileMatcher` matches by suffix **or** by name, so `.env`, `.env.local`, `.env.production` are found (`Path(".env").suffix` is empty). `SecretsDetector` also scans `Dockerfile`, docker-compose files, `.htpasswd`, `.npmrc`, `.pypirc`. `files_scanned` counts every file any engine looked at. | `scanner_engine/base.py`, `scanner_engine/secrets_detector.py`, `scanner_engine/orchestrator.py` |
+| 2 | The alarm no longer goes silent forever. Sound + flash still fire once per finding, but every scan with open CRITICAL findings shows a persistent red banner on the results page ("N critical findings still open"). A full scan removes ids from `alarmed_findings` that are no longer present in that root, so a fixed-then-reintroduced finding alarms again. Finding ids are scoped to the scan root. | `core/alarm_center.py`, `gui/pages/results_page.py` |
+| 3 | Readable titles. Bandit ids map to clear titles (`B307` → "Use of eval()", `B301` → "Unsafe pickle deserialization", ...). A merged issue led by Bandit takes the title of our own rule when one matched. | `scanner_engine/python_scanner.py`, `scanner_engine/issue_merger.py` |
+| 4 | Local tool folders are ignored through `.git/info/exclude` (local only) instead of `.gitignore`. | `.gitignore` |
+
+Tests: 28 passing (`venv\Scripts\python -m pytest`).
+
 ### Notes for the next build
 
 - Do not rebuild the exe from this branch yet.
