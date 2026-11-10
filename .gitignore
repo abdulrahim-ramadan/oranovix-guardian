@@ -49,15 +49,6 @@ reports/output/
 .DS_Store
 Thumbs.db
 
-# ── Local tooling ──────────────────────────────────────────────────────────
-.claude/
-.qodo/
-.codex/
-.cursor/
-.windsurf/
-.codeium/
-.gemini/
-
 # ── Test artefacts ────────────────────────────────────────────────────────
 /test_vuln.*
 .pytest_cache/
