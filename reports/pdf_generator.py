@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -573,7 +574,7 @@ class PDFReportGenerator:
             [t("pdf_scanner"),       result.scanner_name],
             [t("pdf_files_scanned"), str(result.files_scanned)],
             [t("pdf_duration"),      f"{result.duration_seconds:.1f}s"],
-            [t("pdf_status"),        result.status.value],
+            [t("pdf_status"),        self._status_text(result, t)],
         ]
         story.append(
             Table(
@@ -593,6 +594,25 @@ class PDFReportGenerator:
                 ]),
             )
         )
+
+        self._add_engine_warnings(story, result, S, t)
+
+    @staticmethod
+    def _status_text(result: ScanResult, t) -> str:
+        if result.engine_warnings:
+            return f"{result.status.value} ({t('status_with_warnings')})"
+        return result.status.value
+
+    @staticmethod
+    def _add_engine_warnings(story: list, result: ScanResult, S: dict, t) -> None:
+        """List engines that could not run so the report never looks complete when it is not."""
+        if not result.engine_warnings:
+            return
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(t("engine_warnings_title"), S["body_bold"]))
+        story.append(Spacer(1, 3))
+        for warning in result.engine_warnings:
+            story.append(Paragraph(f"! {escape(warning)}", S["body"]))
 
     # ------------------------------------------------------------------
     # Executive summary

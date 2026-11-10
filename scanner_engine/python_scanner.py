@@ -1,35 +1,18 @@
 """
-Python security scanner that wraps Bandit and supplements it with custom regex checks.
+Python security scanner: Bandit (run as a library) plus AST and regex checks.
 
-This module provides ``PythonScanner``, a ``BaseScanner`` subclass that analyses
-Python source files for security vulnerabilities.  It shells out to the Bandit
-static analysis tool (https://bandit.readthedocs.io), parses its JSON output,
-and maps each finding to an ``Issue`` object using an internal severity-escalation
-table that promotes certain Bandit test IDs to CRITICAL or HIGH regardless of
-Bandit's own classification.
-
-In addition to Bandit, two supplemental regex passes are performed on every
-file:
-
-- **SEC001** – Hardcoded secrets/API keys detected by variable-name heuristics.
-- **SEC002** – Path traversal risk when ``open()`` is called with a non-literal
-  argument.
-
-The module also ships a comprehensive ``_build_recommendation`` lookup that
-maps every common Bandit test ID (B101–B703) to actionable developer guidance.
-
-Version: 1.1.0
+Bandit findings are mapped to ``Issue`` objects with an escalation table
+that promotes selected test IDs to CRITICAL or HIGH.  If Bandit cannot
+run, the scan continues with the other checks and records a visible
+entry in ``ScanResult.engine_warnings``.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import subprocess
-import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+from .bandit_runner import BanditFinding, BanditRunner, BanditUnavailableError
 from .base import (
     BaseScanner,
     Issue,
@@ -114,30 +97,15 @@ class PythonScanner(BaseScanner):
     """Scanner for Python source files that combines Bandit with custom regex rules.
 
     ``PythonScanner`` is the concrete ``BaseScanner`` implementation for Python.
-    Its primary strategy is to shell out to Bandit (``_run_bandit``), parse the
-    JSON output (``_parse_bandit_output``), and apply the severity-escalation
-    tables defined at module level to correct Bandit's conservative severity
-    ratings for certain test IDs.
-
-    A secondary pass (``_extra_checks``) runs two regex patterns over each file
-    to catch hardcoded secrets (SEC001) and path traversal risks via ``open()``
-    (SEC002) that Bandit may miss.
-
-    Key responsibilities:
-        - Resolve the Bandit executable path at construction time, handling
-          both development environments and frozen PyInstaller bundles.
-        - Translate Bandit's JSON report into ``Issue`` objects.
-        - Escalate specific Bandit test IDs to CRITICAL or HIGH as appropriate.
-        - Perform supplemental regex analysis for issues outside Bandit's scope.
+    Bandit runs in-process through ``BanditRunner``; AST rules and regex
+    checks cover what Bandit misses.
     """
 
     SUPPORTED_EXTENSIONS: List[str] = [".py"]
 
-    def __init__(self) -> None:
-        """Initialise the scanner and resolve the Bandit executable path."""
+    def __init__(self, bandit_runner: Optional[BanditRunner] = None) -> None:
         super().__init__(name="Python (Bandit)", supported_language=Language.PYTHON)
-        # Resolve once at startup to avoid repeated filesystem lookups per scan
-        self._bandit_exe = self._resolve_bandit()
+        self._bandit_runner = bandit_runner or BanditRunner()
 
     # ------------------------------------------------------------------
     # BaseScanner contract
@@ -155,54 +123,27 @@ class PythonScanner(BaseScanner):
         return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     def _do_scan(self, target: str, result: ScanResult) -> ScanResult:
-        """Scan *target* using Bandit, AST analysis, and supplemental regex checks.
-
-        Collects all ``.py`` files under *target*, runs Bandit over the entire
-        target path for efficiency, applies per-file AST analysis via
-        ASTAnalyzer, and then applies the per-file regex checks for patterns
-        that Bandit misses.  Duplicate issues (same rule_id + file + line) are
-        de-duplicated before returning.
-
-        Args:
-            target: Absolute path to a ``.py`` file or directory.
-            result: Pre-initialised ``ScanResult`` to populate with issues.
-
-        Returns:
-            The same ``result`` object, now containing all discovered issues
-            and an updated ``files_scanned`` count.
-        """
+        """Run Bandit, the regex checks and the AST rules over *target*."""
         from .ast_analyzer import ASTAnalyzer
 
         files = self.collect_files(target, self.SUPPORTED_EXTENSIONS)
         result.files_scanned = len(files)
-
         if not files:
-            # Nothing to scan – return the empty result immediately
             return result
 
-        # Run Bandit over the whole target at once and translate its output
-        raw = self._run_bandit(target)
-        allowed = {os.path.normcase(os.path.abspath(f)) for f in files}
-        issues = [
-            issue for issue in self._parse_bandit_output(raw)
-            if os.path.normcase(os.path.abspath(issue.file_path)) in allowed
-        ]
-        result.issues.extend(issues)
+        result.issues.extend(self._run_bandit(files, result))
 
-        # Track (rule_id, file_path, line_number) to avoid duplicates
         seen: set = {
             (i.rule_id, i.file_path, i.line_number) for i in result.issues
         }
 
         for file_path in files:
-            # Regex-based supplemental checks
             for issue in self._extra_checks(file_path):
                 key = (issue.rule_id, issue.file_path, issue.line_number)
                 if key not in seen:
                     result.issues.append(issue)
                     seen.add(key)
 
-            # AST-based analysis (exact line numbers, no false positives from comments)
             try:
                 code = Path(file_path).read_text(encoding="utf-8", errors="ignore")
                 for issue in ASTAnalyzer.analyze(code, file_path):
@@ -216,139 +157,47 @@ class PythonScanner(BaseScanner):
         return result
 
     # ------------------------------------------------------------------
-    # Bandit execution
+    # Bandit
     # ------------------------------------------------------------------
 
-    def _resolve_bandit(self) -> str:
-        """Return the absolute path to the Bandit executable.
-
-        The resolution strategy handles three deployment scenarios in order:
-
-        1. **Frozen PyInstaller bundle** (``sys.frozen == True``): looks for
-           ``bandit.exe`` or ``bandit`` inside ``sys._MEIPASS`` (the temp
-           extraction directory), then falls back to the directory that
-           contains the application ``.exe``.
-        2. **Development / virtual-environment**: looks inside the ``Scripts``
-           (Windows) or ``bin`` (Unix) directory next to the Python interpreter.
-        3. **Fallback**: returns the bare string ``"bandit"`` and relies on
-           the system ``PATH`` to locate the executable at runtime.
-
-        Returns:
-            An absolute path string to the Bandit executable, or the plain
-            string ``"bandit"`` if no absolute path could be determined.
-        """
-        # When packaged with PyInstaller --onefile, look in _MEIPASS first
-        if getattr(sys, "frozen", False):
-            meipass = getattr(sys, "_MEIPASS", "")
-            for name in ("bandit.exe", "bandit"):
-                candidate = os.path.join(meipass, name)
-                if os.path.exists(candidate):
-                    return candidate
-            # Also try next to the .exe in case bandit was bundled separately
-            exe_dir = os.path.dirname(sys.executable)
-            for name in ("bandit.exe", "bandit"):
-                candidate = os.path.join(exe_dir, name)
-                if os.path.exists(candidate):
-                    return candidate
-        # Development environment: look in the same Scripts/bin dir as Python
-        scripts_dir = Path(sys.executable).parent
-        for candidate in ("bandit.exe", "bandit"):
-            exe = scripts_dir / candidate
-            if exe.exists():
-                return str(exe)
-        return "bandit"  # hope it is on PATH
-
-    def _run_bandit(self, target: str) -> dict:
-        """Execute Bandit as a subprocess and return its parsed JSON output.
-
-        Runs Bandit with recursive mode (``-r``), JSON output format (``-f json``),
-        and low-severity threshold (``-l``) so that every finding is included.
-        Errors (timeout, missing executable, malformed JSON) are silently
-        swallowed and an empty dict is returned, allowing the caller to proceed
-        gracefully with the supplemental regex checks.
-
-        Args:
-            target: Absolute path to the file or directory to pass to Bandit.
-
-        Returns:
-            A dictionary containing Bandit's parsed JSON report, or an empty
-            dict if Bandit could not be executed or produced no output.
-        """
-        cmd = [
-            self._bandit_exe,
-            "-r",         # recursive scan – Bandit handles directory walking itself
-            "-f", "json", # machine-readable JSON output for programmatic parsing
-            "-l",         # include LOW severity findings and above (report everything)
-            target,
-        ]
+    def _run_bandit(self, files: List[str], result: ScanResult) -> List[Issue]:
+        """Run Bandit on *files*; record a warning instead of failing silently."""
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,  # abort if Bandit takes more than 2 minutes
+            report = self._bandit_runner.run(files)
+        except BanditUnavailableError as exc:
+            result.engine_warnings.append(
+                f"Bandit could not run ({exc}). Python results are incomplete: "
+                "only the built-in AST and regex checks were applied."
             )
-            if proc.stdout.strip():
-                return json.loads(proc.stdout)
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-            # TimeoutExpired  – Bandit took too long; skip its output
-            # JSONDecodeError – Bandit produced non-JSON output (e.g. an error message)
-            # FileNotFoundError – Bandit executable not found at the resolved path
-            pass
-        return {}
+            return []
 
-    # ------------------------------------------------------------------
-    # Parsing
-    # ------------------------------------------------------------------
-
-    def _parse_bandit_output(self, data: dict) -> List[Issue]:
-        """Translate Bandit's JSON report into a list of ``Issue`` objects.
-
-        Applies the severity-escalation tables (``_ESCALATE_TO_CRITICAL`` and
-        ``_ESCALATE_TO_HIGH``) before falling back to Bandit's own severity
-        label.  The title is cleaned up by replacing underscores with spaces
-        and applying title-casing so it is suitable for display in the UI.
-
-        Args:
-            data: Parsed JSON dictionary produced by Bandit.  Expected to
-                contain a ``"results"`` key with a list of finding dicts.
-
-        Returns:
-            A list of ``Issue`` objects; empty if *data* has no results.
-        """
-        issues: List[Issue] = []
-        results = data.get("results", [])
-        for item in results:
-            test_id = item.get("test_id", "B000")
-
-            # Apply severity escalation: override Bandit's label for test IDs
-            # that are known to be more dangerous than Bandit rates them.
-            if test_id in _ESCALATE_TO_CRITICAL:
-                severity = Severity.CRITICAL
-            elif test_id in _ESCALATE_TO_HIGH:
-                severity = Severity.HIGH
-            else:
-                # Fall back to Bandit's own severity; default to LOW if unknown
-                severity = _BANDIT_SEVERITY_MAP.get(
-                    item.get("issue_severity", "LOW").upper(), Severity.LOW
-                )
-
-            issue = Issue(
-                rule_id=test_id,
-                # Convert snake_case test names to "Title Case" for readability
-                title=item.get("test_name", "Unknown Issue").replace("_", " ").title(),
-                description=item.get("issue_text", ""),
-                severity=severity,
-                file_path=item.get("filename", ""),
-                line_number=item.get("line_number", 0),
-                code_snippet=item.get("code", "").strip(),
-                recommendation=self._build_recommendation(item),
-                # Extract the CWE link from the nested dict Bandit provides
-                cwe=item.get("issue_cwe", {}).get("link", ""),
-                confidence=item.get("issue_confidence", "MEDIUM"),
+        if report.skipped_files:
+            names = ", ".join(Path(f).name for f in report.skipped_files[:5])
+            result.engine_warnings.append(
+                f"Bandit could not parse {len(report.skipped_files)} file(s): {names}"
             )
-            issues.append(issue)
-        return issues
+        return [self._issue_from_finding(finding) for finding in report.findings]
+
+    def _issue_from_finding(self, finding: BanditFinding) -> Issue:
+        if finding.test_id in _ESCALATE_TO_CRITICAL:
+            severity = Severity.CRITICAL
+        elif finding.test_id in _ESCALATE_TO_HIGH:
+            severity = Severity.HIGH
+        else:
+            severity = _BANDIT_SEVERITY_MAP.get(finding.severity, Severity.LOW)
+
+        return Issue(
+            rule_id=finding.test_id,
+            title=finding.test_name.replace("_", " ").title(),
+            description=finding.text,
+            severity=severity,
+            file_path=finding.file_path,
+            line_number=finding.line_number,
+            code_snippet=finding.code,
+            recommendation=self._build_recommendation(finding.test_id),
+            cwe=finding.cwe_link,
+            confidence=finding.confidence,
+        )
 
     def _extra_checks(self, file_path: str) -> List[Issue]:
         """Run regex-based security checks that supplement Bandit's analysis.
@@ -436,20 +285,8 @@ class PythonScanner(BaseScanner):
         return extra
 
     @staticmethod
-    def _build_recommendation(item: dict) -> str:
-        """Return a developer-facing remediation string for a Bandit finding.
-
-        Looks up *item*'s ``test_id`` in a comprehensive recommendation table
-        covering every Bandit test ID from B101 to B703.  Falls back to a
-        generic least-privilege reminder for any test ID not in the table.
-
-        Args:
-            item: A single result dict from Bandit's JSON ``"results"`` list.
-
-        Returns:
-            A concise, actionable recommendation string for the developer.
-        """
-        test_id: str = item.get("test_id", "")
+    def _build_recommendation(test_id: str) -> str:
+        """Return remediation advice for a Bandit test ID."""
         recommendations: dict[str, str] = {
             "B101": "Remove assert statements in production code or use proper error handling.",
             "B102": "Avoid exec() — use safer alternatives like ast.literal_eval().",

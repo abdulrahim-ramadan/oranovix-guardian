@@ -169,5 +169,9 @@
   "rule_fix": "Fix Suggestion",
   "test_rule": "Test Rule",
   "save_rule": "Save Rule",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "engine_warning": "Engine warning",
+  "engine_warnings_title": "Engine warnings \u2014 results may be incomplete",
+  "scan_done_with_warnings": "Scan finished with {count} engine warning(s) \u2014 results may be incomplete",
+  "status_with_warnings": "with warnings"
 }

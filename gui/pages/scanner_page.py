@@ -720,11 +720,20 @@ class ScannerPage(ctk.CTkFrame):
             "done",
         )
 
-        self._on_status(
-            f"✓  Scan complete — {result.total_issues} issue(s)  |  "
-            f"risk {result.risk_score}/100",
-            "ok",
-        )
+        if result.engine_warnings:
+            for warning in result.engine_warnings:
+                self._log.append(f"{lm.t('engine_warning')}: {warning}", "error")
+            warning_summary = lm.t(
+                "scan_done_with_warnings", count=len(result.engine_warnings)
+            )
+            self._log.append(warning_summary, "error")
+            self._on_status(f"⚠  {warning_summary}", "warn")
+        else:
+            self._on_status(
+                f"✓  Scan complete — {result.total_issues} issue(s)  |  "
+                f"risk {result.risk_score}/100",
+                "ok",
+            )
 
         # Hand off to results page
         self._on_complete(result)

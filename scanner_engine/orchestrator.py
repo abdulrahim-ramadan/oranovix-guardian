@@ -92,28 +92,22 @@ class ScanOrchestrator:
             partial = scanner.scan(target)
             result.files_scanned += partial.files_scanned
             result.issues.extend(partial.issues)
-            if partial.status == ScanStatus.FAILED:
-                self._report(
-                    ScanStage.LANGUAGE_SCAN,
-                    f"{scanner.name} failed: {partial.error_message}",
-                    fraction,
-                    "error",
-                )
+            self._collect_warnings(scanner.name, partial, result, ScanStage.LANGUAGE_SCAN, fraction)
 
     def _run_secrets_detector(self, target: str, result: ScanResult) -> None:
         self._report(ScanStage.SECRETS, "Running Secrets Detector on all files...", 0.65)
         partial = self._secrets_detector.scan(target)
         result.issues.extend(partial.issues)
-        if partial.status == ScanStatus.FAILED:
-            self._report(
-                ScanStage.SECRETS,
-                f"Secrets Detector failed: {partial.error_message}",
-                0.65,
-                "error",
-            )
+        self._collect_warnings(
+            self._secrets_detector.name, partial, result, ScanStage.SECRETS, 0.65
+        )
 
     def _run_rule_engine(self, target: str, result: ScanResult) -> None:
-        engine = self._rule_engine or RuleEngine()
+        try:
+            engine = self._rule_engine or RuleEngine()
+        except Exception as exc:
+            self._warn(result, f"Rule Engine could not load: {exc}", ScanStage.RULES, 0.85)
+            return
         active = [rule for rule in engine.rules if rule.enabled]
         if not active:
             return
@@ -126,6 +120,28 @@ class ScanOrchestrator:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _collect_warnings(
+        self,
+        engine_name: str,
+        partial: ScanResult,
+        result: ScanResult,
+        stage: ScanStage,
+        fraction: float,
+    ) -> None:
+        """Copy an engine's warnings and failure into the merged result."""
+        for warning in partial.engine_warnings:
+            self._warn(result, warning, stage, fraction)
+        if partial.status == ScanStatus.FAILED:
+            self._warn(
+                result, f"{engine_name} failed: {partial.error_message}", stage, fraction
+            )
+
+    def _warn(
+        self, result: ScanResult, warning: str, stage: ScanStage, fraction: float
+    ) -> None:
+        result.engine_warnings.append(warning)
+        self._report(stage, warning, fraction, "error")
 
     @staticmethod
     def _drop_exact_duplicates(issues: List[Issue]) -> List[Issue]:

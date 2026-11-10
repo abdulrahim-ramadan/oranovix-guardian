@@ -238,6 +238,7 @@ class ScanResult:
     files_scanned: int = 0   # Number of files examined (set by _do_scan implementations)
     scanner_name: str = "Unknown"  # Human-readable name of the scanner that ran
     error_message: str = ""  # Non-empty only when status == FAILED
+    engine_warnings: List[str] = field(default_factory=list)  # Engines that could not run fully
 
     # ------------------------------------------------------------------
     # Aggregation helpers
