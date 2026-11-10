@@ -16,7 +16,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List
 
-from .base import BaseScanner, Issue, Language, ScanResult, Severity
+from .base import BaseScanner, FileMatcher, Issue, Language, ScanResult, Severity
+from .categories import IssueCategory
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ class PasswordPattern(SecretPattern):
 
     @property
     def secret_type(self) -> str:
-        return "Hardcoded Password"
+        return "Password"
 
     @property
     def severity(self) -> Severity:
@@ -210,6 +211,12 @@ _ALL_TEXT_EXTENSIONS: List[str] = [
     ".properties", ".gradle", ".pom",
 ]
 
+# Config files that carry credentials but have no usable extension.
+_CONFIG_FILE_NAMES: List[str] = [
+    "Dockerfile", "docker-compose", "compose",
+    ".htpasswd", ".npmrc", ".pypirc",
+]
+
 
 # ---------------------------------------------------------------------------
 # SecretsDetector scanner
@@ -228,6 +235,7 @@ class SecretsDetector(BaseScanner):
     """
 
     SUPPORTED_EXTENSIONS: List[str] = _ALL_TEXT_EXTENSIONS
+    SUPPORTED_FILE_NAMES: List[str] = _CONFIG_FILE_NAMES
 
     _PATTERNS: List[SecretPattern] = [
         AWSKeyPattern(),
@@ -251,8 +259,9 @@ class SecretsDetector(BaseScanner):
         ]
 
     def supports(self, file_path: str) -> bool:
-        """Return True for all recognised text file extensions."""
-        return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
+        """Return True for recognised text extensions, dotfiles and config names."""
+        matcher = FileMatcher(self.SUPPORTED_EXTENSIONS, self.SUPPORTED_FILE_NAMES)
+        return matcher.matches(Path(file_path).name)
 
     def _do_scan(self, target: str, result: ScanResult) -> ScanResult:
         """Scan all text files under target for hardcoded secrets.
@@ -264,7 +273,9 @@ class SecretsDetector(BaseScanner):
         Returns:
             The populated ScanResult with secrets issues added.
         """
-        files = self.collect_files(target, self.SUPPORTED_EXTENSIONS)
+        files = self.collect_files(
+            target, self.SUPPORTED_EXTENSIONS, self.SUPPORTED_FILE_NAMES
+        )
         result.files_scanned = len(files)
 
         for file_path in files:
@@ -322,6 +333,7 @@ class SecretsDetector(BaseScanner):
                     ),
                     cwe="https://cwe.mitre.org/data/definitions/798.html",
                     confidence="HIGH",
+                    category=IssueCategory.SECRET,
                 ))
 
         return issues

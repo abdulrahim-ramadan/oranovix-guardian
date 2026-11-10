@@ -143,5 +143,14 @@
   "select_target_first": "Bitte zuerst ein Ziel ausw\u00e4hlen.",
   "detected_language": "Erkannte Sprache:",
   "scan_engine": "Scan-Engine:",
-  "files_found": "Datei(en) zum Scannen gefunden"
+  "files_found": "Datei(en) zum Scannen gefunden",
+  "engine_warning": "Engine-Warnung",
+  "engine_warnings_title": "Engine-Warnungen \u2014 Ergebnisse k\u00f6nnen unvollst\u00e4ndig sein",
+  "scan_done_with_warnings": "Scan mit {count} Engine-Warnung(en) beendet \u2014 Ergebnisse k\u00f6nnen unvollst\u00e4ndig sein",
+  "status_with_warnings": "mit Warnungen",
+  "alarm_critical_title": "KRITISCHE Sicherheitsl\u00fccke gefunden",
+  "alarm_high_title": "Sicherheitsproblem mit hohem Schweregrad gefunden",
+  "alarm_location": "{language} \u00b7 {file}, Zeile {line}: {issue}",
+  "alarm_counts": "Neue Funde pro Sprache: {counts}",
+  "critical_open_banner": "{count} kritische(r) Fund(e) noch offen"
 }

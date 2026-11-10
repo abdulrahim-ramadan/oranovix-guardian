@@ -300,10 +300,15 @@ class CodeGuardianApp(ctk.CTk):
 
         args = dict(master=self._content)
 
+        if getattr(self, "_alarm_center", None) is None:
+            from gui.alarm_channels import build_alarm_center
+            self._alarm_center = build_alarm_center(self)
+
         self._pages["scanner"] = ScannerPage(
             **args,
             on_scan_complete=self._on_scan_complete,
             on_status=self._status_bar.set_status,
+            alarm_center=self._alarm_center,
         )
         self._pages["dashboard"] = ResultsPage(
             **args,

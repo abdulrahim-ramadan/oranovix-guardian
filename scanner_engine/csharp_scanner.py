@@ -32,6 +32,7 @@ import re
 from pathlib import Path
 from typing import List, Tuple
 
+from .categories import category_for_rule
 from .base import BaseScanner, Issue, Language, ScanResult, Severity
 from .vulnerability_db import VulnerabilityDatabase
 
@@ -136,6 +137,7 @@ class CSharpScanner(BaseScanner):
                 if re.search(pattern, line, re.IGNORECASE):
                     issue = Issue(
                         rule_id=rule_id,
+                        category=category_for_rule(rule_id),
                         title=title,
                         # Truncate the snippet in the description to 120 chars
                         description=f"Detected: {stripped[:120]}",

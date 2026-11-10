@@ -17,13 +17,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import threading
-from dataclasses import dataclass
-from pathlib import Path
+import urllib.error
+from dataclasses import dataclass, replace
 from typing import Callable, Dict, Optional
 
 from .base import Issue
+from .gemini_config import GeminiConfig, GeminiModelNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ class FixSuggestion:
     prevention: str
     confidence: float   # 0.0 (generic) → 1.0 (highly specific)
     source: str = "offline"  # "gemini" or "offline"
+    notice: str = ""         # Why Gemini was not used, when it was expected to be
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +234,8 @@ class AIFixGenerator:
     If a Gemini API key is available (supplied at construction, stored in
     settings.json, or in GEMINI_API_KEY env var) and the network is reachable,
     the Gemini REST API is queried for a structured fix.  Any failure
-    (network, quota, parse) silently triggers the OfflineFixDatabase fallback.
+    (network, quota, retired model) falls back to OfflineFixDatabase and is
+    reported in FixSuggestion.notice.
 
     Results are cached in memory keyed on (rule_id, file_path, line_number)
     to avoid repeated identical API calls within a session.
@@ -241,11 +243,12 @@ class AIFixGenerator:
 
     _GEMINI_URL = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-1.5-flash:generateContent"
+        "{model}:generateContent"
     )
 
-    def __init__(self, api_key: str = "") -> None:
+    def __init__(self, api_key: str = "", model: str = "") -> None:
         self._api_key = api_key or self._load_api_key()
+        self._model = model or GeminiConfig.model_name()
         self._cache: Dict[str, FixSuggestion] = {}
 
     # ------------------------------------------------------------------
@@ -263,18 +266,7 @@ class AIFixGenerator:
     @staticmethod
     def _load_api_key() -> str:
         """Try to read the Gemini API key from settings.json or env var."""
-        env_key = os.getenv("GEMINI_API_KEY", "")
-        if env_key:
-            return env_key
-        try:
-            if getattr(sys, "frozen", False):
-                settings_path = Path(sys.executable).parent / "settings.json"
-            else:
-                settings_path = Path(__file__).parent.parent / "settings.json"
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-            return data.get("api_key", "")
-        except Exception:
-            return ""
+        return os.getenv("GEMINI_API_KEY", "") or GeminiConfig.api_key()
 
     # ------------------------------------------------------------------
     # Public API
@@ -294,17 +286,30 @@ class AIFixGenerator:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        suggestion: FixSuggestion
-        if self._api_key:
-            try:
-                suggestion = self._query_gemini(issue, code)
-            except Exception:
-                suggestion = OfflineFixDatabase.get_fix(issue)
-        else:
+        if not self._api_key:
             suggestion = OfflineFixDatabase.get_fix(issue)
+            self._cache[cache_key] = suggestion
+            return suggestion
+
+        try:
+            suggestion = self._query_gemini(issue, code)
+        except Exception as exc:
+            # Not cached, so the next attempt can reach Gemini again.
+            return replace(
+                OfflineFixDatabase.get_fix(issue),
+                notice=f"{self._describe_failure(exc)} Showing the offline fix instead.",
+            )
 
         self._cache[cache_key] = suggestion
         return suggestion
+
+    @staticmethod
+    def _describe_failure(exc: Exception) -> str:
+        if isinstance(exc, GeminiModelNotFoundError):
+            return str(exc)
+        if isinstance(exc, urllib.error.HTTPError):
+            return f"Gemini request failed (HTTP {exc.code})."
+        return f"Gemini request failed ({type(exc).__name__})."
 
     def generate_fix_async(
         self,
@@ -363,7 +368,7 @@ class AIFixGenerator:
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
         }).encode("utf-8")
 
-        url = f"{self._GEMINI_URL}?key={self._api_key}"
+        url = f"{self._GEMINI_URL.format(model=self._model)}?key={self._api_key}"
         req = urllib.request.Request(
             url,
             data=payload,
@@ -371,8 +376,13 @@ class AIFixGenerator:
             method="POST",
         )
 
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            response_data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                response_data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise GeminiModelNotFoundError(self._model) from exc
+            raise
 
         raw_text = (
             response_data["candidates"][0]["content"]["parts"][0]["text"]

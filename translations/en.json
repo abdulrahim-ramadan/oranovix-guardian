@@ -169,5 +169,14 @@
   "rule_fix": "Fix Suggestion",
   "test_rule": "Test Rule",
   "save_rule": "Save Rule",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "engine_warning": "Engine warning",
+  "engine_warnings_title": "Engine warnings \u2014 results may be incomplete",
+  "scan_done_with_warnings": "Scan finished with {count} engine warning(s) \u2014 results may be incomplete",
+  "status_with_warnings": "with warnings",
+  "alarm_critical_title": "CRITICAL security issue found",
+  "alarm_high_title": "High severity issue found",
+  "alarm_location": "{language} \u00b7 {file}, line {line}: {issue}",
+  "alarm_counts": "New findings per language: {counts}",
+  "critical_open_banner": "{count} critical finding(s) still open"
 }

@@ -9,18 +9,21 @@
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Resolve the security TODO before shipping to production. Create a tracked issue if the fix is non-trivial.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "other"
     },
     {
       "id": "RULE-002",
       "name": "Hardcoded IP Address",
       "description": "A hardcoded IP address is embedded in source code. This can expose internal infrastructure topology and makes configuration inflexible.",
-      "pattern": "(?<![\\d.])(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?![\\d.])",
+      "pattern": "(?<![\\d.])(?!(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0)(?![\\d.]))(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)(?![\\d.])",
       "severity": "LOW",
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Move hardcoded IP addresses to configuration files or environment variables so they can be changed without code modifications.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "network",
+      "exclude_line_pattern": "version"
     },
     {
       "id": "RULE-003",
@@ -31,7 +34,8 @@
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Always verify SSL certificates in production. Pass verify=True (the default) or supply a CA bundle path to requests.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "tls"
     },
     {
       "id": "RULE-004",
@@ -42,7 +46,8 @@
       "language": "Python",
       "enabled": true,
       "fix_suggestion": "Set debug=False in production. Use environment variables to control debug mode: debug=os.getenv('DEBUG','false').lower()=='true'.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "debug"
     },
     {
       "id": "RULE-005",
@@ -53,7 +58,8 @@
       "language": "Python",
       "enabled": true,
       "fix_suggestion": "Use the secrets module for security-sensitive randomness: secrets.token_hex(), secrets.choice(), secrets.randbelow().",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "weak_random"
     },
     {
       "id": "RULE-006",
@@ -64,7 +70,8 @@
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Use HTTPS URLs for all external connections. Update http:// to https://.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "tls"
     },
     {
       "id": "RULE-007",
@@ -75,7 +82,8 @@
       "language": "JavaScript",
       "enabled": true,
       "fix_suggestion": "Remove console.log statements containing sensitive data before deploying to production.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "info_leak"
     },
     {
       "id": "RULE-008",
@@ -86,7 +94,8 @@
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Restrict CORS to specific trusted origins. Use an allowlist instead of wildcard: Access-Control-Allow-Origin: https://yourdomain.com.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "misconfiguration"
     },
     {
       "id": "RULE-009",
@@ -97,7 +106,8 @@
       "language": "ALL",
       "enabled": true,
       "fix_suggestion": "Pass sensitive values in HTTP headers or the request body, never in URL query parameters.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "info_leak"
     },
     {
       "id": "RULE-010",
@@ -108,7 +118,8 @@
       "language": "PHP",
       "enabled": true,
       "fix_suggestion": "Use the full <?php opening tag for portability and security.",
-      "is_builtin": true
+      "is_builtin": true,
+      "category": "other"
     }
   ]
 }

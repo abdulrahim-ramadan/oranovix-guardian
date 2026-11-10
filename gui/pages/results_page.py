@@ -48,6 +48,7 @@ from gui.theme_manager     import ThemeManager
 from gui.animation_manager import AnimationManager
 from core.language_manager import LanguageManager
 from core.scan_history     import ScanHistory
+from core.alarm_center     import AlarmCenter
 from scanner_engine.base   import ScanResult, Severity, Issue
 
 
@@ -708,6 +709,14 @@ class IssueAccordion(ctk.CTkFrame):
                 )
                 conf_pct = int(suggestion.confidence * 100)
 
+                if getattr(suggestion, "notice", ""):
+                    ctk.CTkLabel(
+                        fix_frame, text=f"\u26a0  {suggestion.notice}",
+                        font=ctk.CTkFont(size=10), text_color=tm.c("warning"),
+                        fg_color="transparent", anchor="w", justify="left",
+                        wraplength=640,
+                    ).pack(fill="x", padx=10, pady=(6, 0))
+
                 # Header row: source badge + confidence
                 hdr = ctk.CTkFrame(fix_frame, fg_color="transparent")
                 hdr.pack(fill="x", padx=10, pady=(6, 2))
@@ -900,9 +909,18 @@ class ResultsPage(ctk.CTkFrame):
         ctk.CTkFrame(body, height=1, fg_color=tm.c("border"),
                      corner_radius=0).pack(fill="x", padx=20, pady=(0, 12))
 
+        # ── Open-criticals banner (shown by display() when needed) ────
+        self._critical_banner = ctk.CTkLabel(
+            body, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#ffffff", fg_color=tm.c("critical"),
+            corner_radius=6, height=36,
+        )
+
         # ── Score circle + severity cards ─────────────────────────────
         top = ctk.CTkFrame(body, fg_color="transparent")
         top.pack(fill="x", padx=20, pady=(0, 8))
+        self._results_top = top
 
         self._score_circle = ScoreCircle(top)
         self._score_circle.pack(side="left", padx=(0, 20))
@@ -989,8 +1007,19 @@ class ResultsPage(ctk.CTkFrame):
     # Display scan results
     # ------------------------------------------------------------------
 
+    def _show_critical_banner(self, result: ScanResult) -> None:
+        """Keep a red banner visible while the scan has open CRITICAL findings."""
+        text = AlarmCenter.open_critical_banner(result.issues)
+        self._critical_banner.pack_forget()
+        if text:
+            self._critical_banner.configure(text=f"\u26a0  {text}")
+            self._critical_banner.pack(
+                fill="x", padx=20, pady=(0, 10), before=self._results_top
+            )
+
     def display(self, result: ScanResult) -> None:
         self._result = result
+        self._show_critical_banner(result)
         self._score_circle.animate_to(result.risk_score)
         self._cards["CRITICAL"].update_count(result.critical_count)
         self._cards["HIGH"].update_count(result.high_count)

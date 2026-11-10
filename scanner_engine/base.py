@@ -20,7 +20,45 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
+
+from .categories import IssueCategory
+
+
+# Third-party and generated folders that no engine should scan.
+EXCLUDED_DIRS: frozenset[str] = frozenset({
+    "venv", ".venv", "env", "node_modules", "__pycache__", ".git",
+    "dist", "build", "site-packages", "migrations",
+})
+
+
+class FileMatcher:
+    """Decides whether a file name belongs to a scan.
+
+    A name matches when:
+      - its suffix is a wanted extension (``app.py`` for ``.py``), or
+      - the whole name is a wanted extension, optionally followed by more
+        dotted parts (``.env``, ``.env.local``, ``.env.production``), or
+      - it equals a wanted file name, optionally followed by dotted parts
+        (``Dockerfile``, ``Dockerfile.dev``, ``docker-compose.override``).
+
+    ``Path(".env").suffix`` is empty, which is why the suffix alone is not
+    enough for dotfiles.
+    """
+
+    def __init__(self, extensions: Iterable[str], file_names: Iterable[str] = ()) -> None:
+        self._extensions = frozenset(ext.lower() for ext in extensions)
+        self._name_stems = tuple(
+            stem.lower() for stem in (*self._extensions, *file_names)
+        )
+
+    def matches(self, file_name: str) -> bool:
+        name = file_name.lower()
+        if Path(name).suffix in self._extensions:
+            return True
+        return any(
+            name == stem or name.startswith(stem + ".") for stem in self._name_stems
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +157,9 @@ class Language(Enum):
             ".py":   cls.PYTHON,
             ".js":   cls.JAVASCRIPT,
             ".ts":   cls.JAVASCRIPT,
+            ".jsx":  cls.JAVASCRIPT,
+            ".tsx":  cls.JAVASCRIPT,
+            ".mjs":  cls.JAVASCRIPT,
             ".php":  cls.PHP,
             ".java": cls.JAVA,
             ".cs":   cls.CSHARP,
@@ -152,6 +193,8 @@ class Issue:
     recommendation: str = "" # Concise remediation advice for developers
     cwe: str = ""          # CWE reference URL or identifier (e.g. CWE-79)
     confidence: str = "MEDIUM"  # Scanner confidence level: LOW / MEDIUM / HIGH
+    category: IssueCategory = IssueCategory.OTHER  # Weakness class, used to merge duplicates
+    also_detected_by: List[str] = field(default_factory=list)  # Rule IDs merged into this issue
 
     # ---- Vulnerability education fields (populated by VulnerabilityDatabase)
     what_is_it: str = ""      # Plain-English explanation of the vulnerability class
@@ -172,6 +215,11 @@ class Issue:
         return os.path.basename(self.file_path)
 
     @property
+    def language(self) -> "Language":
+        """Programming language inferred from the file extension."""
+        return Language.from_extension(Path(self.file_path).suffix)
+
+    @property
     def severity_label(self) -> str:
         """Return the string value of the severity enum (e.g. ``"HIGH"``).
 
@@ -179,6 +227,13 @@ class Issue:
             A plain string representation of the issue's severity level.
         """
         return self.severity.value
+
+    @property
+    def rule_ids_label(self) -> str:
+        """Primary rule ID followed by the rules merged into this issue."""
+        if not self.also_detected_by:
+            return self.rule_id
+        return f"{self.rule_id} (+{', '.join(self.also_detected_by)})"
 
     def to_dict(self) -> dict:
         """Serialise the issue to a plain dictionary suitable for JSON export.
@@ -200,6 +255,8 @@ class Issue:
             "recommendation": self.recommendation,
             "cwe": self.cwe,
             "confidence": self.confidence,
+            "category": self.category.value,
+            "also_detected_by": list(self.also_detected_by),
             "what_is_it": self.what_is_it,
             "why_dangerous": self.why_dangerous,
             "how_exploited": self.how_exploited,
@@ -228,6 +285,7 @@ class ScanResult:
     files_scanned: int = 0   # Number of files examined (set by _do_scan implementations)
     scanner_name: str = "Unknown"  # Human-readable name of the scanner that ran
     error_message: str = ""  # Non-empty only when status == FAILED
+    engine_warnings: List[str] = field(default_factory=list)  # Engines that could not run fully
 
     # ------------------------------------------------------------------
     # Aggregation helpers
@@ -280,23 +338,27 @@ class ScanResult:
 
     @property
     def risk_score(self) -> int:
-        """Compute a composite risk score in the range 0–100 (higher = more dangerous).
+        """Risk score 0-100 that approaches 100 without saturating early.
 
-        Each severity tier is weighted differently to reflect its real-world
-        impact: CRITICAL issues have the largest influence (×40), followed by
-        HIGH (×20), MEDIUM (×5), and LOW (×1).  The result is capped at 100 so
-        the UI can treat it as a percentage.
-
-        Returns:
-            An integer between 0 and 100 inclusive.
+        ``weighted = 40*C + 20*H + 5*M + 1*L`` and every 40 weighted points
+        halve the remaining distance to 100, so 3 criticals (88) still
+        score lower than 10 criticals (100).
         """
-        score = (
-            self.critical_count * 40   # critical issues dominate the score
+        weighted = (
+            self.critical_count * 40
             + self.high_count * 20
             + self.medium_count * 5
             + self.low_count * 1
         )
-        return min(score, 100)   # cap at 100 to keep the score bounded
+        return round(100 * (1 - 0.5 ** (weighted / 40)))
+
+    @property
+    def severity_counts_label(self) -> str:
+        """Raw counts shown next to the score, e.g. ``C:3 H:1 M:0 L:2``."""
+        return (
+            f"C:{self.critical_count} H:{self.high_count} "
+            f"M:{self.medium_count} L:{self.low_count}"
+        )
 
     @property
     def risk_label(self) -> str:
@@ -493,32 +555,28 @@ class BaseScanner(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def collect_files(target: str, extensions: List[str]) -> List[str]:
-        """Recursively collect all files matching *extensions* under *target*.
+    def collect_files(
+        target: str,
+        extensions: Iterable[str],
+        file_names: Iterable[str] = (),
+    ) -> List[str]:
+        """Return every file under *target* that matches by extension or name.
 
-        If *target* is a single file and its extension is in *extensions*, that
-        file alone is returned.  If *target* is a directory, the method walks
-        the entire tree and returns every file whose extension matches.
-
-        Args:
-            target: Absolute path to a file or directory.
-            extensions: List of lowercase extensions to match, including the
-                leading dot (e.g. ``[".py", ".pyw"]``).
-
-        Returns:
-            A list of absolute path strings for every matching file found.
-            Returns an empty list if no files match or the target does not exist.
+        Directories listed in ``EXCLUDED_DIRS`` are never entered.  A single
+        file passed as *target* is accepted whenever it matches.  See
+        ``FileMatcher`` for the matching rules (dotfiles such as ``.env``
+        and ``.env.production`` match the ``.env`` extension).
         """
-        collected: List[str] = []
+        matcher = FileMatcher(extensions, file_names)
         target_path = Path(target)
         if target_path.is_file():
-            # Single-file target: include it only if its extension matches
-            if target_path.suffix.lower() in extensions:
-                collected.append(str(target_path))
-        elif target_path.is_dir():
-            # Directory target: walk the tree once per extension using rglob
-            for ext in extensions:
-                collected.extend(
-                    str(p) for p in target_path.rglob(f"*{ext}")
-                )
+            return [str(target_path)] if matcher.matches(target_path.name) else []
+
+        collected: List[str] = []
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIRS]
+            for name in files:
+                if matcher.matches(name):
+                    collected.append(os.path.join(root, name))
+        collected.sort()
         return collected
