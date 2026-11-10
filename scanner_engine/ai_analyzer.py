@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from .base import Issue, ScanResult
+from .gemini_config import DEFAULT_GEMINI_MODEL, GeminiConfig, GeminiModelNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ class AIAnalysis:
     overall_risk: str
     top_recommendations: List[str]
     detailed_insights: List[str]
-    model_used: str = "gemini-1.5-flash"
+    model_used: str = DEFAULT_GEMINI_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +103,13 @@ class GeminiAnalyzer(BaseAIAnalyzer):
     without AI enrichment.
 
     Class attributes:
-        MODEL:                Gemini model identifier sent with every request.
         MAX_ISSUES_IN_PROMPT: Hard cap on issues included in the prompt to
                               stay within free-tier token limits.
     """
 
-    MODEL = "gemini-1.5-flash"
     MAX_ISSUES_IN_PROMPT = 15  # keep tokens low for free tier
 
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None) -> None:
         """Initialise the Gemini analyzer and attempt to create the API client.
 
         Args:
@@ -121,6 +120,8 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         """
         # Prefer an explicitly-supplied key; fall back to the environment variable.
         self._api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self._model = model or GeminiConfig.model_name()
+        self._last_error = ""
         self._client = None
         if self._api_key:
             self._init_client()
@@ -135,10 +136,24 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         try:
             import google.generativeai as genai  # type: ignore
             genai.configure(api_key=self._api_key)
-            self._client = genai.GenerativeModel(self.MODEL)
-        except Exception:
+            self._client = genai.GenerativeModel(self._model)
+        except Exception as exc:
             # Leave self._client as None; is_available() will return False.
             self._client = None
+            self._last_error = f"Gemini client could not start ({type(exc).__name__}: {exc})."
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def last_error(self) -> str:
+        """Human-readable reason for the most recent failure, or an empty string."""
+        return self._last_error
+
+    @staticmethod
+    def _is_model_not_found(exc: Exception) -> bool:
+        return type(exc).__name__ == "NotFound" or "404" in str(exc)
 
     def is_available(self) -> bool:
         """Return True only when both an API key and a live client are present.
@@ -160,17 +175,23 @@ class GeminiAnalyzer(BaseAIAnalyzer):
 
         Returns:
             An ``AIAnalysis`` instance if the API call succeeds and the response
-            can be parsed; ``None`` if the analyzer is unavailable or any error
-            occurs during the request.
+            can be parsed; ``None`` if the analyzer is unavailable or the request
+            fails, in which case ``last_error`` explains why (e.g. a retired model).
         """
         if not self.is_available():
             return None
         try:
             prompt = self._build_prompt(scan_result)
             response = self._client.generate_content(prompt)  # type: ignore
-            return self._parse_response(response.text)
-        except Exception:
-            # Silently absorb network errors, quota errors, etc.
+            analysis = self._parse_response(response.text)
+            analysis.model_used = self._model
+            self._last_error = ""
+            return analysis
+        except Exception as exc:
+            if self._is_model_not_found(exc):
+                self._last_error = str(GeminiModelNotFoundError(self._model))
+            else:
+                self._last_error = f"Gemini request failed ({type(exc).__name__}: {exc})."
             return None
 
     # ------------------------------------------------------------------

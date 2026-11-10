@@ -708,6 +708,14 @@ class IssueAccordion(ctk.CTkFrame):
                 )
                 conf_pct = int(suggestion.confidence * 100)
 
+                if getattr(suggestion, "notice", ""):
+                    ctk.CTkLabel(
+                        fix_frame, text=f"\u26a0  {suggestion.notice}",
+                        font=ctk.CTkFont(size=10), text_color=tm.c("warning"),
+                        fg_color="transparent", anchor="w", justify="left",
+                        wraplength=640,
+                    ).pack(fill="x", padx=10, pady=(6, 0))
+
                 # Header row: source badge + confidence
                 hdr = ctk.CTkFrame(fix_frame, fg_color="transparent")
                 hdr.pack(fill="x", padx=10, pady=(6, 2))

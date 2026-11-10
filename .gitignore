@@ -15,6 +15,7 @@ ENV/
 # ── Build / distribution ───────────────────────────────────────────────────
 dist/
 build/
+release/
 *.egg-info/
 *.egg
 *.spec
@@ -48,7 +49,7 @@ reports/output/
 .DS_Store
 Thumbs.db
 
-# ── Claude Code / AI tooling ──────────────────────────────────────────────
+# ── Local tooling ──────────────────────────────────────────────────────────
 .claude/
 .qodo/
 .codex/
