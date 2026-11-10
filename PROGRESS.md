@@ -1,5 +1,35 @@
 # Oranovix Guardian — Development Progress
 
+## Phase 1 — Django and DRF rules (branch `feature/django-rules`)
+
+Goal: find the typical Django mistakes with few false alarms. Rules that depend on user input use a taint tracker instead of pattern matching. Python `ast` only, no new dependencies.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `TaintTracker`, one per function. Sources: `request.GET`, `POST`, `data`, `query_params`, `body`, `COOKIES`, `META`, `FILES`. Taint flows through assignment, subscript, `.get()`, concatenation, f-strings, `%` and `.format()`. Cleared by `int()`, `float()`, `uuid.UUID()`, `os.path.basename()`, `get_valid_filename()`, `escape()`, by a `url_has_allowed_host_and_scheme` check and by `name in ALLOWLIST`. Flow-sensitive: an expression is judged with the state at its own statement. | `scanner_engine/taint.py` |
+| 2 | View rules, one class per rule (`DjangoRule.check(tree, tracker)`): DJ001 `@csrf_exempt` (HIGH), DJ002 SSRF (CRITICAL), DJ003 open redirect (HIGH), DJ004 path traversal (CRITICAL), DJ005 reflected XSS (HIGH), DJ006 raw SQL (CRITICAL), DJ007 JWT without signature check (CRITICAL), DJ008 DRF `AllowAny` on a write view (HIGH), DJ009 serializer `fields = "__all__"` (MEDIUM), DJ010 possible IDOR (HIGH, confidence LOW). | `scanner_engine/django_rules.py` |
+| 3 | Settings rules, only for `settings.py` and files directly inside `settings/`: DS001 `ALLOWED_HOSTS` with `"*"` (HIGH), DS002 secure cookies off or missing (MEDIUM), DS003 `CsrfViewMiddleware` missing (HIGH), DS004 `SecurityMiddleware` missing (MEDIUM), DS005 `CORS_ALLOW_ALL_ORIGINS = True` (HIGH), DS006 SSL redirect / HSTS missing (LOW). "Missing" is only reported for a complete settings module, not for a file that star-imports a base module. | `scanner_engine/django_settings_rules.py` |
+| 4 | Template rules for `.html`: DT001 `\|safe` (MEDIUM), DT002 `{% autoescape off %}` (HIGH). | `scanner_engine/django_template_rules.py` |
+| 5 | Integration. View and settings rules run inside `PythonScanner`; templates run as their own `ScanOrchestrator` stage and count in `files_scanned`. Every rule has an `IssueCategory`, so a DJ finding merges with Bandit on the same line (DJ006 + B608). A merged issue keeps the highest confidence and the help text of any engine in the group. 18 `VulnerabilityDatabase` entries (what, why, how exploited, fix with code). `AlarmCenter`: sound and taskbar flash only for CRITICAL with confidence not LOW; LOW confidence gets a "needs review" badge on the results page and a toast, never a sound. Badge, hint, alarm title and rule titles are translated (AR/DE/EN). | `scanner_engine/python_scanner.py`, `scanner_engine/orchestrator.py`, `scanner_engine/issue_merger.py`, `scanner_engine/categories.py`, `scanner_engine/vulnerability_db.py`, `core/alarm_center.py`, `core/language_manager.py`, `gui/pages/results_page.py`, `translations/` |
+| 6 | Corpus `tests/corpus/django_app/` (views, vulnerable and hardened settings, two templates). Every rule has at least one vulnerable case that must be reported and one safe case that must not. | `tests/test_django_rules.py` |
+
+Tests: 117 passing (28 from Phase 0 + 89 new).
+
+### Known limits
+
+- Taint is tracked inside one function. It does not follow a value into a helper function, through `self.x`, or out of a nested function.
+- A call to an unknown function does not carry taint (`requests.get(build_url(host))` is not reported). Methods called on tainted data and a short list of string and path helpers do.
+- The Secure-cookie and HTTPS checks cannot see settings that live in another file unless that file is star-imported.
+- Bandit still reports B608 for an f-string query whose only variable went through `int()`. It arrives with LOW confidence, so it shows the "needs review" badge and stays silent.
+- Vulnerability help texts are English only; titles and the badge are translated.
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet. The branch is not merged.
+- No new PyInstaller options are needed: the new modules are plain imports.
+
+---
+
 ## Phase 0 — Engine Foundation (branch `fix/engine-foundation`)
 
 Goal: make the scan engine trustworthy before adding features. Engine first, UI last.
@@ -37,7 +67,7 @@ Tests: 28 passing (`venv\Scripts\python -m pytest`).
 
 ### Open items
 
-- SEC002 path traversal returns as a taint-tracking rule.
+- ~~SEC002 path traversal returns as a taint-tracking rule.~~ Done as DJ004 in Phase 1.
 - Background monitor that feeds `AlarmCenter.notify`.
 - Dashboard history still shows the score without the raw counts.
 
