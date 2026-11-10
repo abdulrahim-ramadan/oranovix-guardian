@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 from typing import List
 
 from .base import Issue, Severity
+from .categories import IssueCategory
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ class DangerousFunctionRule(ASTRule):
                 "or subprocess.run(['cmd', ...]) for shell commands."
             ),
             cwe="https://cwe.mitre.org/data/definitions/78.html",
+            category=IssueCategory.CODE_EXEC,
             confidence="HIGH",
         )]
 
@@ -150,6 +152,7 @@ class SQLInjectionRule(ASTRule):
                 "Never build SQL by string interpolation."
             ),
             cwe="https://cwe.mitre.org/data/definitions/89.html",
+            category=IssueCategory.SQL_INJECTION,
             confidence="HIGH",
         )]
 
@@ -210,6 +213,7 @@ class HardcodedSecretsRule(ASTRule):
                     "Use a secrets manager for production deployments."
                 ),
                 cwe="https://cwe.mitre.org/data/definitions/798.html",
+                category=IssueCategory.SECRET,
                 confidence="HIGH",
             )]
 
@@ -262,6 +266,7 @@ class InsecureImportRule(ASTRule):
                 "msgpack / protobuf for binary formats."
             ),
             cwe="https://cwe.mitre.org/data/definitions/502.html",
+            category=IssueCategory.INSECURE_IMPORT,
             confidence="HIGH",
         )
 
@@ -310,6 +315,7 @@ class WeakCryptoRule(ASTRule):
                 "hashlib.scrypt()."
             ),
             cwe="https://cwe.mitre.org/data/definitions/327.html",
+            category=IssueCategory.WEAK_CRYPTO,
             confidence="HIGH",
         )]
 

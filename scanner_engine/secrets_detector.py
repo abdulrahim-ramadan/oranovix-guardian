@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List
 
 from .base import BaseScanner, Issue, Language, ScanResult, Severity
+from .categories import IssueCategory
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ class PasswordPattern(SecretPattern):
 
     @property
     def secret_type(self) -> str:
-        return "Hardcoded Password"
+        return "Password"
 
     @property
     def severity(self) -> Severity:
@@ -322,6 +323,7 @@ class SecretsDetector(BaseScanner):
                     ),
                     cwe="https://cwe.mitre.org/data/definitions/798.html",
                     confidence="HIGH",
+                    category=IssueCategory.SECRET,
                 ))
 
         return issues

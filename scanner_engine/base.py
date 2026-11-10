@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
+from .categories import IssueCategory
+
 
 # Third-party and generated folders that no engine should scan.
 EXCLUDED_DIRS: frozenset[str] = frozenset({
@@ -162,6 +164,8 @@ class Issue:
     recommendation: str = "" # Concise remediation advice for developers
     cwe: str = ""          # CWE reference URL or identifier (e.g. CWE-79)
     confidence: str = "MEDIUM"  # Scanner confidence level: LOW / MEDIUM / HIGH
+    category: IssueCategory = IssueCategory.OTHER  # Weakness class, used to merge duplicates
+    also_detected_by: List[str] = field(default_factory=list)  # Rule IDs merged into this issue
 
     # ---- Vulnerability education fields (populated by VulnerabilityDatabase)
     what_is_it: str = ""      # Plain-English explanation of the vulnerability class
@@ -190,6 +194,13 @@ class Issue:
         """
         return self.severity.value
 
+    @property
+    def rule_ids_label(self) -> str:
+        """Primary rule ID followed by the rules merged into this issue."""
+        if not self.also_detected_by:
+            return self.rule_id
+        return f"{self.rule_id} (+{', '.join(self.also_detected_by)})"
+
     def to_dict(self) -> dict:
         """Serialise the issue to a plain dictionary suitable for JSON export.
 
@@ -210,6 +221,8 @@ class Issue:
             "recommendation": self.recommendation,
             "cwe": self.cwe,
             "confidence": self.confidence,
+            "category": self.category.value,
+            "also_detected_by": list(self.also_detected_by),
             "what_is_it": self.what_is_it,
             "why_dangerous": self.why_dangerous,
             "how_exploited": self.how_exploited,

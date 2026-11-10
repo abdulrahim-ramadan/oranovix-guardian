@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .bandit_runner import BanditFinding, BanditRunner, BanditUnavailableError
+from .categories import IssueCategory, category_for_rule
 from .base import (
     BaseScanner,
     Issue,
@@ -197,6 +198,7 @@ class PythonScanner(BaseScanner):
             recommendation=self._build_recommendation(finding.test_id),
             cwe=finding.cwe_link,
             confidence=finding.confidence,
+            category=category_for_rule(finding.test_id),
         )
 
     def _extra_checks(self, file_path: str) -> List[Issue]:
@@ -250,6 +252,7 @@ class PythonScanner(BaseScanner):
                 ),
                 cwe="https://cwe.mitre.org/data/definitions/798.html",
                 confidence="HIGH",
+                category=IssueCategory.SECRET,
             ))
 
         # ── Path traversal via open() ──────────────────────────────────

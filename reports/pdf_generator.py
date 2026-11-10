@@ -800,7 +800,7 @@ class PDFReportGenerator:
                 Table(
                     [
                         [Paragraph(t("pdf_rule_id"),   S["small"]),
-                         Paragraph(issue.rule_id,      S["body"]),
+                         Paragraph(issue.rule_ids_label, S["body"]),
                          Paragraph(t("pdf_confidence"), S["small"]),
                          Paragraph(issue.confidence,   S["body"])],
                         [Paragraph(t("pdf_file_label"), S["small"]),

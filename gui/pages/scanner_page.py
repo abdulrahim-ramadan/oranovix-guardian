@@ -706,7 +706,7 @@ class ScannerPage(ctk.CTkFrame):
             )
             self._log.append(
                 f"Line {issue.line_number}: {issue.title} — {issue.severity.value}  "
-                f"[{issue.rule_id}]  ({os.path.basename(issue.file_path)})",
+                f"[{issue.rule_ids_label}]  ({os.path.basename(issue.file_path)})",
                 level,
             )
         if result.total_issues > 20:

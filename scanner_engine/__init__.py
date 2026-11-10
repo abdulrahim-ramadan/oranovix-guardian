@@ -3,6 +3,8 @@ from .python_scanner import PythonScanner
 from .php_scanner import PHPScanner
 from .java_scanner import JavaScanner
 from .csharp_scanner import CSharpScanner
+from .categories import IssueCategory
+from .issue_merger import IssueMerger
 from .factory import ScannerFactory
 from .orchestrator import ScanOrchestrator, ScanProgress, ScanStage
 from .vulnerability_db import VulnerabilityDatabase
@@ -16,6 +18,7 @@ __all__ = [
     "PythonScanner", "PHPScanner", "JavaScanner", "CSharpScanner",
     "ScannerFactory", "VulnerabilityDatabase",
     "ScanOrchestrator", "ScanProgress", "ScanStage",
+    "IssueCategory", "IssueMerger",
     "SecretsDetector", "SecretPattern",
     "ASTAnalyzer", "ASTRule",
     "AIFixGenerator", "OfflineFixDatabase", "FixSuggestion",

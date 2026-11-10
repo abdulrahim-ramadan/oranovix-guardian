@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .base import Issue, Language, Severity
+from .categories import IssueCategory
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ class Rule:
         enabled:        Whether the rule is currently active.
         fix_suggestion: Optional remediation advice shown in the UI.
         is_builtin:     True for default rules; False for user-defined rules.
+        category:       IssueCategory value used to merge duplicate findings.
     """
     id: str
     name: str
@@ -85,6 +87,10 @@ class Rule:
     enabled: bool = True
     fix_suggestion: str = ""
     is_builtin: bool = False
+    category: str = IssueCategory.OTHER.value
+
+    def category_enum(self) -> IssueCategory:
+        return IssueCategory.parse(self.category)
 
     def severity_enum(self) -> Severity:
         """Return the Severity enum member corresponding to this rule's severity."""
@@ -105,6 +111,7 @@ class Rule:
             "enabled": self.enabled,
             "fix_suggestion": self.fix_suggestion,
             "is_builtin": self.is_builtin,
+            "category": self.category,
         }
 
 
@@ -194,6 +201,7 @@ class RuleEngine:
                     enabled=item.get("enabled", True),
                     fix_suggestion=item.get("fix_suggestion", ""),
                     is_builtin=builtin,
+                    category=item.get("category", IssueCategory.OTHER.value),
                 ))
             except KeyError:
                 continue  # skip malformed entries
@@ -318,6 +326,7 @@ class RuleEngine:
                     code_snippet=snippet,
                     recommendation=rule.fix_suggestion,
                     confidence="MEDIUM",
+                    category=rule.category_enum(),
                 ))
 
         return issues
@@ -368,6 +377,7 @@ class RuleEngine:
                 code_snippet=snippet,
                 recommendation=rule.fix_suggestion,
                 confidence="MEDIUM",
+                category=rule.category_enum(),
             ))
         return issues
 

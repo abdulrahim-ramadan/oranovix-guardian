@@ -14,8 +14,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from .base import BaseScanner, Issue, Language, ScanResult, ScanStatus
+from .base import BaseScanner, Language, ScanResult, ScanStatus
 from .factory import ScannerFactory
+from .issue_merger import IssueMerger
 from .rule_engine import RuleEngine
 from .secrets_detector import SecretsDetector
 
@@ -54,6 +55,7 @@ class ScanOrchestrator:
         self._secrets_detector = secrets_detector or SecretsDetector()
         self._rule_engine = rule_engine
         self._on_progress = on_progress
+        self._merger = IssueMerger()
 
     def scan(self, target: str) -> ScanResult:
         """Scan *target* with every applicable engine and return one result."""
@@ -69,7 +71,7 @@ class ScanOrchestrator:
         self._run_secrets_detector(target, result)
         self._run_rule_engine(target, result)
 
-        result.issues = self._drop_exact_duplicates(result.issues)
+        result.issues = self._merger.merge(result.issues)
         result.status = ScanStatus.COMPLETED
         result.finished_at = datetime.now()
         self._report(ScanStage.FINISHED, "Scan finished.", 1.0, "done")
@@ -142,17 +144,6 @@ class ScanOrchestrator:
     ) -> None:
         result.engine_warnings.append(warning)
         self._report(stage, warning, fraction, "error")
-
-    @staticmethod
-    def _drop_exact_duplicates(issues: List[Issue]) -> List[Issue]:
-        seen: set[tuple[str, str, int]] = set()
-        unique: List[Issue] = []
-        for issue in issues:
-            key = (issue.rule_id, issue.file_path, issue.line_number)
-            if key not in seen:
-                seen.add(key)
-                unique.append(issue)
-        return unique
 
     def _report(
         self, stage: ScanStage, message: str, fraction: float, level: str = "scan"
