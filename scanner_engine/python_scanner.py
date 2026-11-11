@@ -1,5 +1,6 @@
 """
-Python security scanner: Bandit (run as a library) plus AST and regex checks.
+Python security scanner: Bandit (run as a library) plus AST, regex and
+Django checks.
 
 Bandit findings are mapped to ``Issue`` objects with an escalation table
 that promotes selected test IDs to CRITICAL or HIGH.  If Bandit cannot
@@ -180,8 +181,10 @@ class PythonScanner(BaseScanner):
         return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     def _do_scan(self, target: str, result: ScanResult) -> ScanResult:
-        """Run Bandit, the regex checks and the AST rules over *target*."""
+        """Run Bandit, the regex checks, the AST rules and the Django rules."""
         from .ast_analyzer import ASTAnalyzer
+        from .django_rules import DjangoAnalyzer
+        from .django_settings_rules import DjangoSettingsAnalyzer
 
         files = self.collect_files(target, self.SUPPORTED_EXTENSIONS)
         result.files_scanned = len(files)
@@ -203,7 +206,11 @@ class PythonScanner(BaseScanner):
 
             try:
                 code = Path(file_path).read_text(encoding="utf-8", errors="ignore")
-                for issue in ASTAnalyzer.analyze(code, file_path):
+                for issue in (
+                    *ASTAnalyzer.analyze(code, file_path),
+                    *DjangoAnalyzer.analyze(code, file_path),
+                    *DjangoSettingsAnalyzer.analyze(code, file_path),
+                ):
                     key = (issue.rule_id, issue.file_path, issue.line_number)
                     if key not in seen:
                         result.issues.append(issue)

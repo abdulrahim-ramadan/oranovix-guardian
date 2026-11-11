@@ -49,7 +49,7 @@ class AnimationManager:
     @staticmethod
     def count_up(
         root,
-        set_fn: Callable[[str], None],
+        set_fn: Callable[[str], object],
         target: int,
         duration_ms: int = 900,
         suffix: str = "",

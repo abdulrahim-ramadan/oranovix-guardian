@@ -29,6 +29,15 @@ class IssueCategory(str, Enum):
     DEBUG = "debug"
     MISCONFIGURATION = "misconfiguration"
     NETWORK = "network"
+    CSRF = "csrf"
+    SSRF = "ssrf"
+    PATH_TRAVERSAL = "path_traversal"
+    ACCESS_CONTROL = "access_control"
+    TOKEN_VERIFICATION = "token_verification"
+    DATA_EXPOSURE = "data_exposure"
+    HOST_VALIDATION = "host_validation"
+    COOKIE_SECURITY = "cookie_security"
+    CORS = "cors"
     OTHER = "other"
 
     @classmethod
@@ -62,6 +71,7 @@ RULE_CATEGORIES: dict[str, IssueCategory] = {
     "B308": _C.XSS, "B701": _C.XSS, "B702": _C.XSS, "B703": _C.XSS,
     "B201": _C.DEBUG, "B202": _C.DEBUG,
     "B104": _C.NETWORK,
+    "B310": _C.SSRF,
     # Python regex checks
     "SEC001": _C.SECRET,
     # JavaScript / TypeScript
@@ -99,6 +109,25 @@ RULE_CATEGORIES: dict[str, IssueCategory] = {
     "CS009": _C.DESERIALIZATION, "CS010": _C.DESERIALIZATION,
     "CS011": _C.DEBUG,
     "CS012": _C.INFO_LEAK, "CS013": _C.INFO_LEAK,
+    # Django / DRF views
+    "DJ001": _C.CSRF,
+    "DJ002": _C.SSRF,
+    "DJ003": _C.OPEN_REDIRECT,
+    "DJ004": _C.PATH_TRAVERSAL,
+    "DJ005": _C.XSS,
+    "DJ006": _C.SQL_INJECTION,
+    "DJ007": _C.TOKEN_VERIFICATION,
+    "DJ008": _C.ACCESS_CONTROL, "DJ010": _C.ACCESS_CONTROL,
+    "DJ009": _C.DATA_EXPOSURE,
+    # Django settings
+    "DS001": _C.HOST_VALIDATION,
+    "DS002": _C.COOKIE_SECURITY,
+    "DS003": _C.CSRF,
+    "DS004": _C.MISCONFIGURATION,
+    "DS005": _C.CORS,
+    "DS006": _C.TLS,
+    # Django templates
+    "DT001": _C.XSS, "DT002": _C.XSS,
 }
 
 

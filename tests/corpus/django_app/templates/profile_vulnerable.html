@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>{{ user.display_name }}</h1>
+  <div class="bio">{{ profile.bio|safe }}</div>
+  {% autoescape off %}
+    <div class="signature">{{ profile.signature }}</div>
+  {% endautoescape %}
+</body>
+</html>

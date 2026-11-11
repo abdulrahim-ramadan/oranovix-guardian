@@ -34,7 +34,7 @@ def convert_png_to_ico() -> bool:
         blobs: list[bytes] = []
         for s in sizes:
             buf = io.BytesIO()
-            base.resize((s, s), Image.LANCZOS).save(buf, format="PNG")
+            base.resize((s, s), Image.Resampling.LANCZOS).save(buf, format="PNG")
             blobs.append(buf.getvalue())
 
         # Build ICO: header + directory + image data

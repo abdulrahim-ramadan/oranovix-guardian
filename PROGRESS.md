@@ -1,5 +1,75 @@
 # Oranovix Guardian — Development Progress
 
+## Type check, API key storage and AI privacy (branch `chore/types-and-api-key`)
+
+Goal: a clean type check, a Gemini API key that is really saved without ever being written to a plain-text file, and no secret or unneeded code leaving the machine for the online AI.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | Type check with pyright: `pyrightconfig.json` uses the project `venv` and skips `tests/corpus` (broken on purpose). 45 errors in application code fixed. `gui/dashboard.py` deleted: it imported names that do not exist and nothing used it. | `pyrightconfig.json`, 14 source files |
+| 2 | `SecretStore` keeps the key in the OS credential store through `keyring` (Windows Credential Manager, service `OranovixGuardian`, entry `gemini_api_key`): `get()`, `set()`, `delete()`, `is_available()`, `mask()`. When no credential store works, `get()` returns nothing, `set()` and `delete()` raise `SecretStoreError`, and only the `GEMINI_API_KEY` environment variable is used. | `core/secret_store.py` |
+| 3 | One key lookup for both AI engines: `GeminiConfig.api_key()` reads the environment variable first, then `SecretStore`. `settings.json` is no longer a key source. | `scanner_engine/gemini_config.py`, `scanner_engine/ai_analyzer.py`, `scanner_engine/ai_fix_generator.py` |
+| 4 | One-time migration: an old `"api_key"` in `settings.json` is moved into `SecretStore` and deleted from the file (settings page start and every key lookup). A key already saved through the settings page is not overwritten. If the credential store is not usable, the entry stays in the file so the key is not lost, and the move is tried again next time. | `scanner_engine/gemini_config.py` |
+| 5 | Settings page: Save and Remove buttons. Status shows "Key saved (••••1234)" with only the last 4 characters; the field is cleared after saving. A warning appears when the credential store is not available (Save is disabled) and a note when `GEMINI_API_KEY` is set and therefore wins. Texts in AR/DE/EN. | `gui/pages/settings_page.py`, `translations/` |
+| 6 | Dead `_saved_api_key` / `_api_entry` code removed from the main window. | `gui/app.py` |
+
+| 7 | `Redactor.redact(text)` replaces secret values with `<REDACTED>`: everything matched by the `SecretsDetector` patterns (AWS, OpenAI, GitHub, JWT with its signature, a private key block up to its END line, the password in a connection string) and any string literal assigned to or compared with a name that contains password / secret / token / api_key / secret_key and the other names of the AST secrets rule. The patterns and names are read from the scanner, not copied, so a new scanner pattern is redacted automatically. | `core/redactor.py`, `scanner_engine/secrets_detector.py`, `scanner_engine/ast_analyzer.py` |
+| 8 | Every outbound AI text goes through the Redactor. The fix generator sends the title and the snippet, the analyzer sends titles and descriptions; both name the file without its folder, and the analyzer sends only the folder name of the scan target. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/ai_analyzer.py` |
+| 9 | A finding in the secret category never goes online (also when a secret rule was merged into it). It always gets the `OfflineFixDatabase` fix, and the analyzer leaves it out of the prompt and sends only how many there were. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/ai_analyzer.py` |
+| 10 | The API key is sent in the `x-goog-api-key` header; the URL has no query string. Failure messages contain only the HTTP status or the error type; analyzer errors pass through `GeminiConfig.safe_error_text`, which removes the key and any URL. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/gemini_config.py` |
+| 11 | Consent. Nothing is sent unless `settings.json` holds `"ai_online_consent": "allow"`; the engines check this themselves, so the default is offline even without the UI. The first AI fix that would go online opens a dialog ("The vulnerable line will be sent to Google Gemini after secrets are removed. Allow?", Allow / Use offline only). Closing the dialog saves nothing and uses the offline fix. The choice can be changed with a switch in Settings. Texts in AR/DE/EN. | `gui/ai_consent_dialog.py`, `gui/pages/results_page.py`, `gui/pages/settings_page.py`, `translations/` |
+| 12 | Allowlist redaction of code, because a pattern list cannot know every secret format. `Redactor.redact_code(snippet, file_name)`: (a) the content of every string literal becomes `<STR_1>`, `<STR_2>`... with the same value always getting the same placeholder; quotes and prefixes stay; only empty strings, single characters and single escapes are kept. Handles `'`, `"`, triple quotes, `r`/`b`/`f` prefixes, JS template strings, C# `$"..."` and `@"..."`, PHP/Java/C# quotes; in f-strings and template strings the `{...}` fields stay as code. An unterminated string is redacted to the end of the line. (b) Outside strings, every token of 16+ characters that mixes letters and digits becomes `<VALUE_1>`..., except a name that is being called (`get_object_or_404(`). (c) Comment text becomes `<COMMENT>`; the file extension decides whether `#` or `//` starts a comment. (d) The pattern pass from step 7 runs over the result as a second layer. Titles and descriptions use `redact` (patterns, then long tokens). The prompt tells the model to keep the placeholders; the returned fix is shown as it is and real values are never put back. | `core/redactor.py`, `scanner_engine/ai_fix_generator.py` |
+
+Tests: 226 passing (117 + 25 in `tests/test_secret_store.py` + 84 in `tests/test_ai_privacy.py`). The key tests use an in-memory keyring backend and never touch the real Credential Manager; the privacy tests replace the HTTP call and inspect the request, so no test reaches the network. Type check: `uvx pyright`, 0 errors.
+
+### Notes for the next build
+
+- New dependency: `keyring` (`src/requirements.txt`).
+- PyInstaller needs: `--hidden-import keyring.backends.Windows`.
+- Not checked in a built exe yet. If the exe reports "secure storage is not available", also add `--copy-metadata keyring`.
+
+### Known limits
+
+- A new key is used by the next AI request; no restart is needed. An AI request that is already running keeps the old key.
+- The settings page does not test the key against Google; a wrong key shows up at the first AI request.
+- Code redaction is deliberately broad. The model no longer sees what a string says (for example the SQL text), only that there is a string and how it is combined with variables, so an online fix can be less specific than before.
+- In a settings file (`.env*`, `.ini`, `.cfg`, `.conf`, `.properties`, `.yaml`, `.yml`, `.toml`) every unquoted value after `=` or `:` is replaced too, except booleans and numbers.
+- Still sent as they are: variable and function names, numbers, and, in source files, values outside strings that are shorter than 16 characters or have no digit (for example a password typed unquoted in a shell script).
+- Titles and descriptions are prose and only get the pattern and long-token passes, not the string replacement.
+- With the offline choice or without consent, the AI fix button still works and shows the offline fix.
+
+---
+
+## Phase 1 — Django and DRF rules (branch `feature/django-rules`)
+
+Goal: find the typical Django mistakes with few false alarms. Rules that depend on user input use a taint tracker instead of pattern matching. Python `ast` only, no new dependencies.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `TaintTracker`, one per function. Sources: `request.GET`, `POST`, `data`, `query_params`, `body`, `COOKIES`, `META`, `FILES`. Taint flows through assignment, subscript, `.get()`, concatenation, f-strings, `%` and `.format()`. Cleared by `int()`, `float()`, `uuid.UUID()`, `os.path.basename()`, `get_valid_filename()`, `escape()`, by a `url_has_allowed_host_and_scheme` check and by `name in ALLOWLIST`. Flow-sensitive: an expression is judged with the state at its own statement. | `scanner_engine/taint.py` |
+| 2 | View rules, one class per rule (`DjangoRule.check(tree, tracker)`): DJ001 `@csrf_exempt` (HIGH), DJ002 SSRF (CRITICAL), DJ003 open redirect (HIGH), DJ004 path traversal (CRITICAL), DJ005 reflected XSS (HIGH), DJ006 raw SQL (CRITICAL), DJ007 JWT without signature check (CRITICAL), DJ008 DRF `AllowAny` on a write view (HIGH), DJ009 serializer `fields = "__all__"` (MEDIUM), DJ010 possible IDOR (HIGH, confidence LOW). | `scanner_engine/django_rules.py` |
+| 3 | Settings rules, only for `settings.py` and files directly inside `settings/`: DS001 `ALLOWED_HOSTS` with `"*"` (HIGH), DS002 secure cookies off or missing (MEDIUM), DS003 `CsrfViewMiddleware` missing (HIGH), DS004 `SecurityMiddleware` missing (MEDIUM), DS005 `CORS_ALLOW_ALL_ORIGINS = True` (HIGH), DS006 SSL redirect / HSTS missing (LOW). "Missing" is only reported for a complete settings module, not for a file that star-imports a base module. | `scanner_engine/django_settings_rules.py` |
+| 4 | Template rules for `.html`: DT001 `\|safe` (MEDIUM), DT002 `{% autoescape off %}` (HIGH). | `scanner_engine/django_template_rules.py` |
+| 5 | Integration. View and settings rules run inside `PythonScanner`; templates run as their own `ScanOrchestrator` stage and count in `files_scanned`. Every rule has an `IssueCategory`, so a DJ finding merges with Bandit on the same line (DJ006 + B608). A merged issue keeps the highest confidence and the help text of any engine in the group. 18 `VulnerabilityDatabase` entries (what, why, how exploited, fix with code). `AlarmCenter`: sound and taskbar flash only for CRITICAL with confidence not LOW; LOW confidence gets a "needs review" badge on the results page and a toast, never a sound. Badge, hint, alarm title and rule titles are translated (AR/DE/EN). | `scanner_engine/python_scanner.py`, `scanner_engine/orchestrator.py`, `scanner_engine/issue_merger.py`, `scanner_engine/categories.py`, `scanner_engine/vulnerability_db.py`, `core/alarm_center.py`, `core/language_manager.py`, `gui/pages/results_page.py`, `translations/` |
+| 6 | Corpus `tests/corpus/django_app/` (views, vulnerable and hardened settings, two templates). Every rule has at least one vulnerable case that must be reported and one safe case that must not. | `tests/test_django_rules.py` |
+
+Tests: 117 passing (28 from Phase 0 + 89 new).
+
+### Known limits
+
+- Taint is tracked inside one function. It does not follow a value into a helper function, through `self.x`, or out of a nested function.
+- A call to an unknown function does not carry taint (`requests.get(build_url(host))` is not reported). Methods called on tainted data and a short list of string and path helpers do.
+- The Secure-cookie and HTTPS checks cannot see settings that live in another file unless that file is star-imported.
+- Bandit still reports B608 for an f-string query whose only variable went through `int()`. It arrives with LOW confidence, so it shows the "needs review" badge and stays silent.
+- Vulnerability help texts are English only; titles and the badge are translated.
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet. The branch is not merged.
+- No new PyInstaller options are needed: the new modules are plain imports.
+
+---
+
 ## Phase 0 — Engine Foundation (branch `fix/engine-foundation`)
 
 Goal: make the scan engine trustworthy before adding features. Engine first, UI last.
@@ -37,7 +107,7 @@ Tests: 28 passing (`venv\Scripts\python -m pytest`).
 
 ### Open items
 
-- SEC002 path traversal returns as a taint-tracking rule.
+- ~~SEC002 path traversal returns as a taint-tracking rule.~~ Done as DJ004 in Phase 1.
 - Background monitor that feeds `AlarmCenter.notify`.
 - Dashboard history still shows the score without the raw counts.
 

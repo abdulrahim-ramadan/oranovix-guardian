@@ -22,6 +22,13 @@ from typing import List
 from .base import Issue, Severity
 from .categories import IssueCategory
 
+# Variable names that suggest a secret. Shared with ``core.redactor``.
+SECRET_VARIABLE_NAMES: frozenset = frozenset({
+    "password", "passwd", "pwd", "secret", "api_key", "apikey",
+    "token", "auth_token", "access_token", "private_key",
+    "secret_key", "api_secret", "client_secret",
+})
+
 
 # ---------------------------------------------------------------------------
 # Abstract base for AST rules
@@ -73,7 +80,7 @@ class DangerousFunctionRule(ASTRule):
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
 
-        if func_name not in self._DANGEROUS:
+        if func_name is None or func_name not in self._DANGEROUS:
             return []
 
         return [Issue(
@@ -169,11 +176,7 @@ class HardcodedSecretsRule(ASTRule):
     values like password = "" or token = None.
     """
 
-    _SECRET_NAMES: set = {
-        "password", "passwd", "pwd", "secret", "api_key", "apikey",
-        "token", "auth_token", "access_token", "private_key",
-        "secret_key", "api_secret", "client_secret",
-    }
+    _SECRET_NAMES: frozenset = SECRET_VARIABLE_NAMES
 
     def check(self, node: ast.AST) -> List[Issue]:
         if not isinstance(node, ast.Assign):
@@ -186,7 +189,7 @@ class HardcodedSecretsRule(ASTRule):
             elif isinstance(target, ast.Attribute):
                 var_name = target.attr.lower()
 
-            if var_name not in self._SECRET_NAMES:
+            if var_name is None or var_name not in self._SECRET_NAMES:
                 continue
 
             value = node.value

@@ -12,6 +12,10 @@ from .categories import IssueCategory
 
 _MergeKey = Tuple[str, int, str]
 _BANDIT_RULE_ID = re.compile(r"^B\d{3}$")
+_EDUCATION_FIELDS = (
+    "what_is_it", "why_dangerous", "how_exploited", "fix_suggestion", "owasp_category",
+)
+_CONFIDENCE_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
 
 
 class IssueMerger:
@@ -21,7 +25,9 @@ class IssueMerger:
     the others are recorded in ``also_detected_by``.  Uncategorised
     issues are only merged with exact repeats of the same rule.  When a
     Bandit issue survives, it takes the title of one of our own rules in
-    the group, which names the problem more precisely.
+    the group, which names the problem more precisely.  Education text
+    that only a merged issue carries is kept, and the merged issue is as
+    confident as the most confident engine that reported it.
     """
 
     def merge(self, issues: Iterable[Issue]) -> List[Issue]:
@@ -46,6 +52,13 @@ class IssueMerger:
             for rule_id in (other.rule_id, *other.also_detected_by):
                 if rule_id != primary.rule_id and rule_id not in primary.also_detected_by:
                     primary.also_detected_by.append(rule_id)
+            for field_name in _EDUCATION_FIELDS:
+                if not getattr(primary, field_name):
+                    setattr(primary, field_name, getattr(other, field_name))
+        primary.confidence = max(
+            (issue.confidence for issue in group),
+            key=lambda confidence: _CONFIDENCE_RANK.get(str(confidence).upper(), 0),
+        )
         if _BANDIT_RULE_ID.match(primary.rule_id):
             own_rules = [i for i in group if not _BANDIT_RULE_ID.match(i.rule_id)]
             if own_rules:

@@ -92,9 +92,6 @@ class CodeGuardianApp(ctk.CTk):
         # a theme/language rebuild.
         self._current_page:  str          = "scanner"
         self._scan_result:   Optional[object] = None
-        # Preserve the API key string across UI rebuilds so the user does
-        # not have to re-enter it every time they change the theme.
-        self._saved_api_key: str          = ""
 
         # Register observers so theme/language changes trigger a rebuild.
         # These registrations persist across UI rebuilds because the
@@ -399,14 +396,8 @@ class CodeGuardianApp(ctk.CTk):
 
         A translucent overlay frame is placed over the entire window for
         60 ms before the rebuild to create a brief flash transition that
-        softens the abrupt widget destruction.  Any transient state (API
-        key text) is saved before destruction and will be restored once
-        the new SettingsPage is created.
+        softens the abrupt widget destruction.
         """
-        # Preserve the API key entered by the user before destroying widgets
-        if hasattr(self, "_api_entry"):
-            self._saved_api_key = self._api_entry.get()
-
         # Overlay covers the window to create a smooth visual transition
         tm = ThemeManager()
         overlay = tk.Frame(

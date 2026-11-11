@@ -28,7 +28,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -224,8 +224,8 @@ class StyleBuilder:
         self._body_font      = FontRegistry.get_arabic_font() if is_rtl else "Helvetica"
         self._body_font_bold = FontRegistry.get_arabic_bold() if is_rtl else "Helvetica-Bold"
         # RTL body text is right-aligned; headings always use centred alignment.
-        self._align_body  = TA_RIGHT  if is_rtl else TA_LEFT
-        self._align_center = TA_CENTER
+        self._align_body: Literal[0, 2] = TA_RIGHT if is_rtl else TA_LEFT
+        self._align_center: Literal[1] = TA_CENTER
 
     def build(self) -> dict:
         """Build and return the complete named-style dictionary.

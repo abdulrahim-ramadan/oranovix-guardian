@@ -15,7 +15,7 @@ import json
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Set
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +121,15 @@ class LanguageManager:
                 pass
         return text
 
+    def rule_title(self, rule_ids: Iterable[str], fallback: str) -> str:
+        """Translated title of the first rule in *rule_ids* that has one."""
+        for rule_id in rule_ids:
+            key = f"rule_title_{rule_id}"
+            text = self.t(key)
+            if text != key:
+                return text
+        return fallback
+
     # ── Layout direction helpers ──────────────────────────────────────────
 
     @property
@@ -198,7 +207,8 @@ class LanguageManager:
             import arabic_reshaper              # type: ignore
             from bidi.algorithm import get_display  # type: ignore
             reshaped = arabic_reshaper.reshape(text)
-            return get_display(reshaped)
+            displayed = get_display(reshaped)
+            return displayed if isinstance(displayed, str) else text
         except Exception:
             return text
 

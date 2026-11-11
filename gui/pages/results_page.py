@@ -561,7 +561,15 @@ class IssueAccordion(ctk.CTkFrame):
                      font=ctk.CTkFont(size=9, weight="bold"),
                      text_color="#ffffff").pack(side="left", padx=(0, 8))
 
-        ctk.CTkLabel(hdr, text=issue.title,
+        if issue.needs_review:
+            ctk.CTkLabel(hdr,
+                         text=f" {lm.t('needs_review')} ",
+                         fg_color=tm.c("warning"), corner_radius=4,
+                         font=ctk.CTkFont(size=9, weight="bold"),
+                         text_color="#ffffff").pack(side="left", padx=(0, 8))
+
+        title = lm.rule_title((issue.rule_id, *issue.also_detected_by), issue.title)
+        ctk.CTkLabel(hdr, text=title,
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=tm.c("text"), fg_color="transparent",
                      anchor="w").pack(side="left", fill="x", expand=True)
@@ -611,6 +619,9 @@ class IssueAccordion(ctk.CTkFrame):
                          corner_radius=4, anchor="w", justify="left",
                          wraplength=560).pack(fill="x", padx=16, pady=(2, 4))
 
+        if issue.needs_review:
+            _row("\U0001f50d", lm.t("needs_review"), lm.t("needs_review_hint"),
+                 tm.c("warning"))
         if issue.description:
             _row("\U0001f4cb", lm.t("vulnerability"), issue.description)
         if issue.what_is_it:
@@ -677,8 +688,19 @@ class IssueAccordion(ctk.CTkFrame):
         once the generator completes.
         """
         from scanner_engine.ai_fix_generator import AIFixGenerator
+        from scanner_engine.gemini_config import GeminiConfig
         tm = ThemeManager()
         lm = LanguageManager()
+
+        generator = AIFixGenerator()
+        # Ask once before the first request that would leave the machine.
+        # Closing the dialog saves nothing: this fix is offline and the
+        # question comes again next time.
+        if generator.needs_consent(issue):
+            from gui.ai_consent_dialog import AIConsentDialog
+            choice = AIConsentDialog.ask(self)
+            if choice is not None:
+                GeminiConfig.set_online_consent(choice)
 
         # Hide button row while loading
         for widget in ai_row.winfo_children():
@@ -792,7 +814,6 @@ class IssueAccordion(ctk.CTkFrame):
             except Exception:
                 pass  # widget may have been destroyed
 
-        generator = AIFixGenerator()
         generator.generate_fix_async(issue, issue.code_snippet, _on_fix)
 
     def _toggle(self, _=None) -> None:
@@ -861,14 +882,15 @@ class ResultsPage(ctk.CTkFrame):
         )
         self._export_btn.pack(side="right", padx=16, pady=10)
 
-        if self._on_navigate:
+        on_navigate = self._on_navigate
+        if on_navigate:
             ctk.CTkButton(
                 hdr,
                 text="🔍  Quick Scan",
                 font=ctk.CTkFont(size=11),
                 fg_color=tm.c("bg3"), hover_color=tm.c("hover"),
                 text_color=tm.c("accent"), corner_radius=6, height=30, width=120,
-                command=lambda: self._on_navigate("scanner"),
+                command=lambda: on_navigate("scanner"),
             ).pack(side="right", padx=(0, 8), pady=10)
 
         # ── Scrollable body ───────────────────────────────────────────

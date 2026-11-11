@@ -134,6 +134,7 @@ class Language(Enum):
     PHP        = "PHP"
     JAVA       = "Java"
     CSHARP     = "C#"
+    HTML       = "HTML"
     UNKNOWN    = "Unknown"
 
     @classmethod
@@ -163,6 +164,9 @@ class Language(Enum):
             ".php":  cls.PHP,
             ".java": cls.JAVA,
             ".cs":   cls.CSHARP,
+            ".html": cls.HTML,
+            ".htm":  cls.HTML,
+            ".djhtml": cls.HTML,
         }
         return mapping.get(ext.lower(), cls.UNKNOWN)
 
@@ -227,6 +231,11 @@ class Issue:
             A plain string representation of the issue's severity level.
         """
         return self.severity.value
+
+    @property
+    def needs_review(self) -> bool:
+        """Low-confidence finding: shown with a badge, never announced by sound."""
+        return str(self.confidence).upper() == "LOW"
 
     @property
     def rule_ids_label(self) -> str:
