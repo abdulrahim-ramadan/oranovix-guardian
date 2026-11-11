@@ -688,8 +688,19 @@ class IssueAccordion(ctk.CTkFrame):
         once the generator completes.
         """
         from scanner_engine.ai_fix_generator import AIFixGenerator
+        from scanner_engine.gemini_config import GeminiConfig
         tm = ThemeManager()
         lm = LanguageManager()
+
+        generator = AIFixGenerator()
+        # Ask once before the first request that would leave the machine.
+        # Closing the dialog saves nothing: this fix is offline and the
+        # question comes again next time.
+        if generator.needs_consent(issue):
+            from gui.ai_consent_dialog import AIConsentDialog
+            choice = AIConsentDialog.ask(self)
+            if choice is not None:
+                GeminiConfig.set_online_consent(choice)
 
         # Hide button row while loading
         for widget in ai_row.winfo_children():
@@ -803,7 +814,6 @@ class IssueAccordion(ctk.CTkFrame):
             except Exception:
                 pass  # widget may have been destroyed
 
-        generator = AIFixGenerator()
         generator.generate_fix_async(issue, issue.code_snippet, _on_fix)
 
     def _toggle(self, _=None) -> None:

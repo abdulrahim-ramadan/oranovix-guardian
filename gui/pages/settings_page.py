@@ -314,6 +314,31 @@ class SettingsPage(ctk.CTkFrame):
         GeminiConfig.migrate_legacy_api_key()
         self._refresh_api_key_status()
 
+        # Consent for online AI fixes. Off unless the user allowed it.
+        online_row = ctk.CTkFrame(ai_body, fg_color="transparent")
+        online_row.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(
+            online_row, text=lm.t("ai_online_setting"),
+            font=ctk.CTkFont(size=12), text_color=tm.c("text"),
+            fg_color="transparent",
+        ).pack(side="left")
+        self._ai_online_switch = ctk.CTkSwitch(
+            online_row, text="",
+            onvalue=True, offvalue=False,
+            fg_color=tm.c("border"), progress_color=tm.c("accent"),
+            command=self._toggle_ai_online,
+        )
+        self._ai_online_switch.pack(side="right")
+        if GeminiConfig.online_allowed():
+            self._ai_online_switch.select()
+        else:
+            self._ai_online_switch.deselect()
+        ctk.CTkLabel(
+            ai_body, text=lm.t("ai_online_setting_hint"),
+            font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
+            fg_color="transparent", anchor="w", justify="left", wraplength=520,
+        ).pack(anchor="w", pady=(2, 0))
+
         # ── Rules Manager ─────────────────────────────────────────────
         rules_sec = _Section(scroll, f"\U0001f4cb  {lm.t('rules_manager')}")
         rules_sec.pack(fill="x", pady=(0, 12))
@@ -398,6 +423,10 @@ class SettingsPage(ctk.CTkFrame):
 
         self._api_save_btn.configure(state="normal" if available else "disabled")
         self._api_remove_btn.configure(state="normal" if stored else "disabled")
+
+    def _toggle_ai_online(self) -> None:
+        """Save whether AI fix requests may be sent to Google Gemini."""
+        GeminiConfig.set_online_consent(bool(self._ai_online_switch.get()))
 
     def _save_api_key(self) -> None:
         """Store the typed key in the credential store and clear the field."""

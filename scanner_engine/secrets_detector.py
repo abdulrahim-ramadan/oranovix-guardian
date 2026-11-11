@@ -247,6 +247,11 @@ class SecretsDetector(BaseScanner):
         JWTPattern(),
     ]
 
+    @classmethod
+    def patterns(cls) -> List[SecretPattern]:
+        """Return the registered secret patterns (also used by ``core.redactor``)."""
+        return list(cls._PATTERNS)
+
     def __init__(self) -> None:
         super().__init__(
             name="Secrets Detector",

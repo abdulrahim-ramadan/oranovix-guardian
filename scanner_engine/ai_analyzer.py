@@ -23,6 +23,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional
 
+from core.redactor import Redactor
+
+from .ai_fix_generator import is_secret_finding
 from .base import Issue, ScanResult
 from .gemini_config import DEFAULT_GEMINI_MODEL, GeminiConfig, GeminiModelNotFoundError
 
@@ -140,7 +143,10 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         except Exception as exc:
             # Leave self._client as None; is_available() will return False.
             self._client = None
-            self._last_error = f"Gemini client could not start ({type(exc).__name__}: {exc})."
+            self._last_error = (
+                f"Gemini client could not start "
+                f"({GeminiConfig.safe_error_text(exc, self._api_key)})."
+            )
 
     @property
     def model(self) -> str:
@@ -180,6 +186,9 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         """
         if not self.is_available():
             return None
+        if not GeminiConfig.online_allowed():
+            self._last_error = "Online AI is switched off. Allow it in Settings to use Gemini."
+            return None
         try:
             prompt = self._build_prompt(scan_result)
             response = self._client.generate_content(prompt)  # type: ignore
@@ -191,7 +200,10 @@ class GeminiAnalyzer(BaseAIAnalyzer):
             if self._is_model_not_found(exc):
                 self._last_error = str(GeminiModelNotFoundError(self._model))
             else:
-                self._last_error = f"Gemini request failed ({type(exc).__name__}: {exc})."
+                self._last_error = (
+                    f"Gemini request failed "
+                    f"({GeminiConfig.safe_error_text(exc, self._api_key)})."
+                )
             return None
 
     # ------------------------------------------------------------------
@@ -212,19 +224,31 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         Returns:
             A formatted multi-line string ready to pass to ``generate_content``.
         """
+        def clean(text: str, path: str) -> str:
+            text = Redactor.hide_path(text, path)
+            return Redactor.redact(Redactor.hide_path(text, result.target_path))
+
+        # Findings in the secret category are never sent: only their number is.
+        sendable = [issue for issue in result.issues if not is_secret_finding(issue)]
+        withheld = len(result.issues) - len(sendable)
+
         issues_text = ""
         # Enumerate issues with a 1-based index for readable prompt formatting.
-        for i, issue in enumerate(result.issues[: self.MAX_ISSUES_IN_PROMPT], 1):
+        for i, issue in enumerate(sendable[: self.MAX_ISSUES_IN_PROMPT], 1):
             issues_text += (
-                f"{i}. [{issue.severity.value}] {issue.title}\n"
-                f"   File: {issue.filename}:{issue.line_number}\n"
-                f"   {issue.description}\n\n"
+                f"{i}. [{issue.severity.value}] {clean(issue.title, issue.file_path)}\n"
+                f"   File: {Redactor.file_name(issue.file_path)}:{issue.line_number}\n"
+                f"   {clean(issue.description, issue.file_path)}\n\n"
+            )
+        if withheld:
+            issues_text += (
+                f"({withheld} hardcoded-secret finding(s) are not listed here.)\n"
             )
 
         return f"""You are a senior application security engineer. Analyze the following security scan results and provide actionable insights.
 
 SCAN SUMMARY:
-- Target: {result.target_path}
+- Target: {Redactor.file_name(result.target_path)}
 - Files scanned: {result.files_scanned}
 - Total issues: {result.total_issues}
 - Critical: {result.critical_count}, High: {result.high_count}, Medium: {result.medium_count}, Low: {result.low_count}

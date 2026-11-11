@@ -22,6 +22,13 @@ from typing import List
 from .base import Issue, Severity
 from .categories import IssueCategory
 
+# Variable names that suggest a secret. Shared with ``core.redactor``.
+SECRET_VARIABLE_NAMES: frozenset = frozenset({
+    "password", "passwd", "pwd", "secret", "api_key", "apikey",
+    "token", "auth_token", "access_token", "private_key",
+    "secret_key", "api_secret", "client_secret",
+})
+
 
 # ---------------------------------------------------------------------------
 # Abstract base for AST rules
@@ -169,11 +176,7 @@ class HardcodedSecretsRule(ASTRule):
     values like password = "" or token = None.
     """
 
-    _SECRET_NAMES: set = {
-        "password", "passwd", "pwd", "secret", "api_key", "apikey",
-        "token", "auth_token", "access_token", "private_key",
-        "secret_key", "api_secret", "client_secret",
-    }
+    _SECRET_NAMES: frozenset = SECRET_VARIABLE_NAMES
 
     def check(self, node: ast.AST) -> List[Issue]:
         if not isinstance(node, ast.Assign):

@@ -183,5 +183,11 @@
   "api_key_save_failed": "Der Schl\u00fcssel konnte nicht gespeichert werden: {error}",
   "api_key_remove_failed": "Der Schl\u00fcssel konnte nicht entfernt werden: {error}",
   "api_key_env_active": "Die Umgebungsvariable GEMINI_API_KEY ist gesetzt und hat Vorrang.",
-  "api_key_store_unavailable": "Der sichere Speicher ist auf diesem System nicht verf\u00fcgbar, der Schl\u00fcssel kann daher nicht gespeichert werden. Bitte stattdessen die Umgebungsvariable GEMINI_API_KEY setzen."
+  "api_key_store_unavailable": "Der sichere Speicher ist auf diesem System nicht verf\u00fcgbar, der Schl\u00fcssel kann daher nicht gespeichert werden. Bitte stattdessen die Umgebungsvariable GEMINI_API_KEY setzen.",
+  "ai_consent_title": "Code an Google Gemini senden?",
+  "ai_consent_text": "Die verwundbare Zeile wird an Google Gemini gesendet, nachdem Geheimnisse entfernt wurden. Erlauben?",
+  "ai_consent_allow": "Erlauben",
+  "ai_consent_offline": "Nur offline verwenden",
+  "ai_online_setting": "Online-KI-Korrekturen erlauben (Google Gemini)",
+  "ai_online_setting_hint": "Aus: Es werden nur die eingebauten Offline-Korrekturen verwendet. Ein: Die verwundbare Zeile wird an Google Gemini gesendet, nachdem Geheimnisse entfernt wurden. Funde, die selbst Geheimnisse sind, werden nie gesendet."
 }

@@ -6,9 +6,14 @@ Provides two complementary fix generation strategies:
 1. OfflineFixDatabase — instant rule-based suggestions from a curated
    dictionary of known vulnerability fixes, requiring zero network access.
 
-2. AIFixGenerator — primary strategy using Gemini API; automatically falls
-   back to OfflineFixDatabase when no API key is configured or the network
-   is unavailable.  Results are cached in memory to avoid repeated API calls.
+2. AIFixGenerator — uses the Gemini API when a key is configured and the
+   user allowed online requests; otherwise, and on any failure, it falls
+   back to OfflineFixDatabase.  Results are cached in memory.
+
+What leaves the machine: only the finding's title and code snippet, after
+``core.redactor.Redactor`` removed secrets, with the file named without
+its folder.  A finding in the secret category is never sent.  The API key
+travels in the ``x-goog-api-key`` header, never in the URL.
 
 Version: 1.0.0
 """
@@ -22,8 +27,24 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Callable, Dict, Optional
 
+from core.redactor import Redactor
+
 from .base import Issue
+from .categories import IssueCategory, category_for_rule
 from .gemini_config import GeminiConfig, GeminiModelNotFoundError
+
+SECRET_FINDING_NOTICE = (
+    "Findings that contain a secret are never sent to the online AI. "
+    "Showing the offline fix."
+)
+
+
+def is_secret_finding(issue: Issue) -> bool:
+    """True when the issue, or any rule merged into it, is in the secret category."""
+    if issue.category is IssueCategory.SECRET:
+        return True
+    rule_ids = [issue.rule_id, *issue.also_detected_by]
+    return any(category_for_rule(rule_id) is IssueCategory.SECRET for rule_id in rule_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +288,21 @@ class AIFixGenerator:
     # Public API
     # ------------------------------------------------------------------
 
+    def can_go_online(self, issue: Issue) -> bool:
+        """Whether this issue may be sent at all: a key exists and the
+        finding is not a secret. Consent is checked separately."""
+        return bool(self._api_key) and not is_secret_finding(issue)
+
+    def needs_consent(self, issue: Issue) -> bool:
+        """Whether the user still has to be asked before this issue goes online."""
+        return self.can_go_online(issue) and GeminiConfig.online_consent() is None
+
     def generate_fix(self, issue: Issue, code: str = "") -> FixSuggestion:
-        """Generate a fix suggestion, trying Gemini first then offline fallback.
+        """Generate a fix suggestion: Gemini when allowed, otherwise offline.
+
+        A finding in the secret category is never sent; it always gets the
+        offline fix. Other findings go online only when a key exists and
+        the user allowed it, and only after secrets were removed.
 
         Args:
             issue: The security issue to generate a fix for.
@@ -281,7 +315,16 @@ class AIFixGenerator:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        if not self._api_key:
+        online_enabled = bool(self._api_key) and GeminiConfig.online_allowed()
+
+        if is_secret_finding(issue):
+            suggestion = OfflineFixDatabase.get_fix(issue)
+            if online_enabled:
+                suggestion = replace(suggestion, notice=SECRET_FINDING_NOTICE)
+            self._cache[cache_key] = suggestion
+            return suggestion
+
+        if not online_enabled:
             suggestion = OfflineFixDatabase.get_fix(issue)
             self._cache[cache_key] = suggestion
             return suggestion
@@ -329,6 +372,45 @@ class AIFixGenerator:
     # Gemini REST API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_prompt(issue: Issue, code: str) -> str:
+        """Compose the prompt. Every piece of scan data in it has been
+        through the Redactor, and the file is named without its folder."""
+        def clean(text: str) -> str:
+            return Redactor.redact(Redactor.hide_path(text, issue.file_path))
+
+        snippet = clean(issue.code_snippet or (code[:400] if code else "")) or "N/A"
+
+        return (
+            f"You are a security expert. This code has a {issue.severity.value} "
+            f"vulnerability: {clean(issue.title)}\n\n"
+            f"Vulnerable code ({Redactor.file_name(issue.file_path)}, "
+            f"line {issue.line_number}):\n{snippet}\n\n"
+            "Provide:\n"
+            "1. Fixed code (just the corrected lines, no explanation in code)\n"
+            "2. One sentence explanation of why the fix works\n"
+            "3. One sentence prevention tip\n\n"
+            "Return ONLY valid JSON, no markdown:\n"
+            '{"fixed_code": "...", "explanation": "...", "prevention": "..."}'
+        )
+
+    def _build_request(self, prompt: str) -> urllib.request.Request:
+        """Build the POST request. The key travels in a header, never in the URL."""
+        payload = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+        }).encode("utf-8")
+
+        return urllib.request.Request(
+            self._GEMINI_URL.format(model=self._model),
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self._api_key,
+            },
+            method="POST",
+        )
+
     def _query_gemini(self, issue: Issue, code: str) -> FixSuggestion:
         """POST to the Gemini REST API and parse the structured response.
 
@@ -342,32 +424,7 @@ class AIFixGenerator:
         Raises:
             Exception: On any network, parse, or API error.
         """
-        snippet = issue.code_snippet or (code[:400] if code else "N/A")
-
-        prompt = (
-            f"You are a security expert. This code has a {issue.severity.value} "
-            f"vulnerability: {issue.title}\n\n"
-            f"Vulnerable code (line {issue.line_number}):\n{snippet}\n\n"
-            "Provide:\n"
-            "1. Fixed code (just the corrected lines, no explanation in code)\n"
-            "2. One sentence explanation of why the fix works\n"
-            "3. One sentence prevention tip\n\n"
-            "Return ONLY valid JSON, no markdown:\n"
-            '{"fixed_code": "...", "explanation": "...", "prevention": "..."}'
-        )
-
-        payload = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
-        }).encode("utf-8")
-
-        url = f"{self._GEMINI_URL.format(model=self._model)}?key={self._api_key}"
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        req = self._build_request(self._build_prompt(issue, code))
 
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:

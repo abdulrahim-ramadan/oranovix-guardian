@@ -209,5 +209,11 @@
   "api_key_save_failed": "The key could not be saved: {error}",
   "api_key_remove_failed": "The key could not be removed: {error}",
   "api_key_env_active": "The GEMINI_API_KEY environment variable is set and is used first.",
-  "api_key_store_unavailable": "Secure storage is not available on this system, so the key cannot be saved. Set the GEMINI_API_KEY environment variable instead."
+  "api_key_store_unavailable": "Secure storage is not available on this system, so the key cannot be saved. Set the GEMINI_API_KEY environment variable instead.",
+  "ai_consent_title": "Send code to Google Gemini?",
+  "ai_consent_text": "The vulnerable line will be sent to Google Gemini after secrets are removed. Allow?",
+  "ai_consent_allow": "Allow",
+  "ai_consent_offline": "Use offline only",
+  "ai_online_setting": "Allow online AI fixes (Google Gemini)",
+  "ai_online_setting_hint": "Off: only the built-in offline fixes are used. On: the vulnerable line is sent to Google Gemini after secrets are removed. Findings that are secrets are never sent."
 }

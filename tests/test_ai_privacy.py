@@ -1,0 +1,518 @@
+"""Nothing secret leaves the machine: redaction, consent, and the request itself."""
+from __future__ import annotations
+
+import io
+import json
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Iterator, List
+
+import keyring
+import pytest
+from keyring.backends.fail import Keyring as FailKeyring
+
+from core.redactor import REDACTED, Redactor
+from scanner_engine import ai_fix_generator
+from scanner_engine.ai_analyzer import GeminiAnalyzer
+from scanner_engine.ai_fix_generator import AIFixGenerator, is_secret_finding
+from scanner_engine.base import Issue, ScanResult, Severity
+from scanner_engine.categories import IssueCategory
+from scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
+from scanner_engine.secrets_detector import SecretsDetector
+
+API_KEY = "AIzaSy-unit-test-key-000000000000000001"
+AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+CONNECTION = "postgresql://admin:Pa55word@host"
+FULL_PATH = r"C:\Users\someone\projects\shop\billing\views.py"
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+class FakeResponse:
+    """What ``urlopen`` returns: a context manager with ``read()``."""
+
+    def __init__(self, text: str) -> None:
+        self._body = json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+        ).encode("utf-8")
+
+    def __enter__(self) -> "FakeResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+class FakeHttp:
+    """Stands in for ``urllib.request.urlopen`` and records every request."""
+
+    def __init__(self) -> None:
+        self.requests: List[urllib.request.Request] = []
+        self.error: Exception | None = None
+
+    def __call__(self, request: urllib.request.Request, timeout: float = 0) -> FakeResponse:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return FakeResponse('{"fixed_code": "ok()", "explanation": "e", "prevention": "p"}')
+
+    @property
+    def sent_text(self) -> str:
+        """The prompt of the single request that was sent."""
+        assert len(self.requests) == 1
+        data = self.requests[0].data
+        assert isinstance(data, bytes)
+        return json.loads(data.decode("utf-8"))["contents"][0]["parts"][0]["text"]
+
+
+@pytest.fixture
+def http(monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
+    fake = FakeHttp()
+    monkeypatch.setattr(ai_fix_generator.urllib.request, "urlopen", fake)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """An empty settings.json, no env key and no credential store."""
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(GeminiConfig, "settings_path", staticmethod(lambda: path))
+    monkeypatch.delenv(GEMINI_API_KEY_ENV, raising=False)
+    previous = keyring.get_keyring()
+    keyring.set_keyring(FailKeyring())
+    yield path
+    keyring.set_keyring(previous)
+
+
+@pytest.fixture
+def consent_given() -> None:
+    GeminiConfig.set_online_consent(True)
+
+
+def make_issue(**overrides: Any) -> Issue:
+    values = dict(
+        rule_id="B608",
+        title="SQL injection through string formatting",
+        description="Query built from user input.",
+        severity=Severity.HIGH,
+        file_path=FULL_PATH,
+        line_number=12,
+        code_snippet='cursor.execute("SELECT * FROM t WHERE id = %s" % user_id)',
+        recommendation="Use parameters.",
+        category=IssueCategory.SQL_INJECTION,
+    )
+    values.update(overrides)
+    return Issue(**values)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Redactor
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        AWS_KEY,
+        "sk-" + "a1B2" * 12,
+        "ghp_" + "Z9y8" * 9,
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    ],
+    ids=["aws", "openai", "github", "jwt"],
+)
+def test_token_formats_are_replaced(secret: str) -> None:
+    redacted = Redactor.redact(f'client = connect("{secret}")')
+
+    assert secret not in redacted
+    assert redacted == f'client = connect("{REDACTED}")'
+
+
+def test_jwt_signature_is_removed_too() -> None:
+    redacted = Redactor.redact("h = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SIGNATUREPART'")
+
+    assert "SIGNATUREPART" not in redacted
+
+
+def test_private_key_block_is_removed() -> None:
+    text = (
+        "key = '''-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEowIBAAKCAQEAsecretbody\n"
+        "-----END RSA PRIVATE KEY-----'''\nprint(1)"
+    )
+
+    redacted = Redactor.redact(text)
+
+    assert "MIIEowIBAAKCAQEAsecretbody" not in redacted
+    assert "print(1)" in redacted
+
+
+def test_connection_string_keeps_everything_but_the_password() -> None:
+    redacted = Redactor.redact(f'engine = create_engine("{CONNECTION}/shop")')
+
+    assert "Pa55word" not in redacted
+    assert redacted == f'engine = create_engine("postgresql://admin:{REDACTED}@host/shop")'
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'password = "hunter2hunter2"',
+        "DB_PASSWORD = 'hunter2hunter2'",
+        'api_key: str = "hunter2hunter2"',
+        'config = {"secret_key": "hunter2hunter2"}',
+        "$cfg = ['token' => 'hunter2hunter2'];",
+        'String apiKey = "hunter2hunter2";',
+        'os.environ["CLIENT_SECRET"] = "hunter2hunter2"',
+        'if token == "hunter2hunter2":',
+        'connect(host="db", passwd="hunter2hunter2")',
+        'auth_token = f"hunter2hunter2"',
+    ],
+)
+def test_literal_assigned_to_a_secret_name_is_replaced(line: str) -> None:
+    redacted = Redactor.redact(line)
+
+    assert "hunter2hunter2" not in redacted
+    assert REDACTED in redacted
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'name = "Alice"',
+        'cursor.execute("SELECT * FROM users WHERE id = %s" % user_id)',
+        "password = get_password()",
+        'password = ""',
+        "return render(request, 'profile.html')",
+    ],
+)
+def test_ordinary_code_is_left_alone(line: str) -> None:
+    assert Redactor.redact(line) == line
+
+
+def test_redaction_is_stable_when_applied_twice() -> None:
+    once = Redactor.redact(f'password = "x1y2z3"; url = "{CONNECTION}"; k = "{AWS_KEY}"')
+
+    assert Redactor.redact(once) == once
+
+
+def test_every_detector_pattern_is_covered() -> None:
+    """A pattern added to the scanner is redacted without touching the Redactor."""
+    samples = {
+        "SEC-AWS01": AWS_KEY,
+        "SEC-OAI01": "sk-" + "a1B2" * 12,
+        "SEC-GHP01": "ghp_" + "Z9y8" * 9,
+        "SEC-PWD01": 'secret = "hunter2hunter2"',
+        "SEC-CONN1": "mysql://root:hunter2hunter2@db",
+        "SEC-PRVK1": "-----BEGIN EC PRIVATE KEY-----\nhunter2hunter2\n-----END EC PRIVATE KEY-----",
+        "SEC-JWT01": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.hunter2hunter2",
+    }
+    assert {p.rule_id for p in SecretsDetector.patterns()} == set(samples)
+
+    for rule_id, sample in samples.items():
+        redacted = Redactor.redact(sample)
+        assert REDACTED in redacted, rule_id
+        for value in (AWS_KEY, "a1B2a1B2", "Z9y8Z9y8", "hunter2hunter2"):
+            assert value not in redacted, rule_id
+
+
+def test_file_name_drops_the_folder() -> None:
+    assert Redactor.file_name(FULL_PATH) == "views.py"
+    assert Redactor.file_name("/home/someone/app/views.py") == "views.py"
+    assert Redactor.file_name("views.py") == "views.py"
+
+
+# ---------------------------------------------------------------------------
+# What the fix generator sends
+# ---------------------------------------------------------------------------
+
+def test_snippet_is_sent_without_the_secret_values(http: FakeHttp, consent_given: None) -> None:
+    issue = make_issue(
+        code_snippet=(
+            f'aws = "{AWS_KEY}"; db = connect("{CONNECTION}"); '
+            'cursor.execute("SELECT * FROM t WHERE id = %s" % user_id)'
+        ),
+    )
+
+    suggestion = AIFixGenerator(api_key=API_KEY).generate_fix(issue)
+
+    assert suggestion.source == "gemini"
+    sent = http.sent_text
+    assert AWS_KEY not in sent
+    assert CONNECTION not in sent
+    assert "Pa55word" not in sent
+    assert sent.count(REDACTED) == 2
+    assert "cursor.execute" in sent  # the vulnerable code itself still arrives
+
+
+def test_nothing_in_the_whole_request_carries_the_secrets(
+    http: FakeHttp, consent_given: None
+) -> None:
+    issue = make_issue(
+        title=f"Injection near {AWS_KEY}",
+        code_snippet=f'q = "{CONNECTION}" + user_id; password = "hunter2hunter2"',
+    )
+
+    AIFixGenerator(api_key=API_KEY).generate_fix(issue)
+
+    request = http.requests[0]
+    assert isinstance(request.data, bytes)
+    everything = request.full_url + request.data.decode("utf-8")
+    for value in (AWS_KEY, "Pa55word", "hunter2hunter2"):
+        assert value not in everything
+
+
+def test_only_the_file_name_is_sent(http: FakeHttp, consent_given: None) -> None:
+    issue = make_issue(description=f"Found in {FULL_PATH}", title=f"SQL injection in {FULL_PATH}")
+
+    AIFixGenerator(api_key=API_KEY).generate_fix(issue)
+
+    sent = http.sent_text
+    assert "views.py" in sent
+    assert "someone" not in sent
+    assert "billing" not in sent
+
+
+def test_code_fallback_is_redacted_when_there_is_no_snippet(
+    http: FakeHttp, consent_given: None
+) -> None:
+    issue = make_issue(code_snippet="")
+
+    AIFixGenerator(api_key=API_KEY).generate_fix(issue, code=f'KEY = "{AWS_KEY}"\nrun(x)')
+
+    assert AWS_KEY not in http.sent_text
+    assert "run(x)" in http.sent_text
+
+
+# ---------------------------------------------------------------------------
+# Secret findings stay offline
+# ---------------------------------------------------------------------------
+
+def test_secret_finding_makes_no_network_call(http: FakeHttp, consent_given: None) -> None:
+    issue = make_issue(
+        rule_id="SEC-AWS01",
+        title="Hardcoded AWS Access Key ID",
+        code_snippet=f'aws_key = "{AWS_KEY}"',
+        category=IssueCategory.SECRET,
+    )
+
+    suggestion = AIFixGenerator(api_key=API_KEY).generate_fix(issue)
+
+    assert http.requests == []
+    assert suggestion.source == "offline"
+    assert "never sent" in suggestion.notice
+
+
+def test_issue_merged_with_a_secret_rule_makes_no_network_call(
+    http: FakeHttp, consent_given: None
+) -> None:
+    issue = make_issue(category=IssueCategory.OTHER, also_detected_by=["B105"])
+
+    assert is_secret_finding(issue)
+    assert AIFixGenerator(api_key=API_KEY).generate_fix(issue).source == "offline"
+    assert http.requests == []
+
+
+def test_every_detector_finding_is_a_secret_finding(tmp_path: Path) -> None:
+    target = tmp_path / "config.py"
+    target.write_text(f'aws = "{AWS_KEY}"\nurl = "{CONNECTION}"\n', encoding="utf-8")
+
+    issues = SecretsDetector().scan(str(target)).issues
+
+    assert len(issues) == 2
+    assert all(is_secret_finding(issue) for issue in issues)
+
+
+# ---------------------------------------------------------------------------
+# The API key
+# ---------------------------------------------------------------------------
+
+def test_key_is_in_the_header_and_not_in_the_url(http: FakeHttp, consent_given: None) -> None:
+    AIFixGenerator(api_key=API_KEY, model="gemini-test").generate_fix(make_issue())
+
+    request = http.requests[0]
+    assert request.get_header("X-goog-api-key") == API_KEY
+    assert API_KEY not in request.full_url
+    assert "key=" not in request.full_url
+    assert "?" not in request.full_url
+    assert request.full_url.endswith("/models/gemini-test:generateContent")
+    assert isinstance(request.data, bytes)
+    assert API_KEY not in request.data.decode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.HTTPError(
+            "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+            403, f"Forbidden for key {API_KEY}", {}, io.BytesIO(b""),  # type: ignore[arg-type]
+        ),
+        urllib.error.HTTPError(
+            "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+            404, "Not Found", {}, io.BytesIO(b""),  # type: ignore[arg-type]
+        ),
+        urllib.error.URLError(f"cannot reach https://generativelanguage.googleapis.com/?key={API_KEY}"),
+        ValueError(f"bad response from https://generativelanguage.googleapis.com with {API_KEY}"),
+    ],
+    ids=["http-403", "http-404", "url-error", "value-error"],
+)
+def test_failure_message_has_no_key_and_no_url(
+    http: FakeHttp, consent_given: None, error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    http.error = error
+
+    with caplog.at_level("DEBUG"):
+        suggestion = AIFixGenerator(api_key=API_KEY).generate_fix(make_issue())
+
+    assert suggestion.source == "offline"
+    assert suggestion.notice
+    for text in (suggestion.notice, caplog.text):
+        assert API_KEY not in text
+        assert "generativelanguage" not in text
+        assert "http://" not in text and "https://" not in text
+
+
+def test_safe_error_text_removes_key_and_url() -> None:
+    error = RuntimeError(f"POST https://example.test/v1/models?key={API_KEY} failed for {API_KEY}")
+
+    text = GeminiConfig.safe_error_text(error, API_KEY)
+
+    assert API_KEY not in text
+    assert "https://" not in text
+    assert text.startswith("RuntimeError:")
+
+
+# ---------------------------------------------------------------------------
+# Consent
+# ---------------------------------------------------------------------------
+
+def test_default_is_offline(http: FakeHttp) -> None:
+    assert GeminiConfig.online_consent() is None
+    assert GeminiConfig.online_allowed() is False
+
+    suggestion = AIFixGenerator(api_key=API_KEY).generate_fix(make_issue())
+
+    assert suggestion.source == "offline"
+    assert http.requests == []
+
+
+def test_offline_choice_is_saved_and_respected(http: FakeHttp, isolated_settings: Path) -> None:
+    GeminiConfig.set_online_consent(False)
+
+    assert json.loads(isolated_settings.read_text(encoding="utf-8")) == {
+        "ai_online_consent": "offline"
+    }
+    assert GeminiConfig.online_consent() is False
+    assert AIFixGenerator(api_key=API_KEY).generate_fix(make_issue()).source == "offline"
+    assert http.requests == []
+
+
+def test_allow_choice_is_saved_and_can_be_changed_back(
+    http: FakeHttp, isolated_settings: Path
+) -> None:
+    isolated_settings.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
+
+    GeminiConfig.set_online_consent(True)
+    assert json.loads(isolated_settings.read_text(encoding="utf-8")) == {
+        "theme": "dark", "ai_online_consent": "allow",
+    }
+    assert AIFixGenerator(api_key=API_KEY).generate_fix(make_issue()).source == "gemini"
+    assert len(http.requests) == 1
+
+    GeminiConfig.set_online_consent(False)
+    assert AIFixGenerator(api_key=API_KEY).generate_fix(make_issue()).source == "offline"
+    assert len(http.requests) == 1
+
+
+def test_consent_is_asked_only_for_a_request_that_would_go_online() -> None:
+    with_key = AIFixGenerator(api_key=API_KEY)
+    secret = make_issue(category=IssueCategory.SECRET)
+
+    assert with_key.needs_consent(make_issue()) is True
+    assert with_key.needs_consent(secret) is False          # stays offline anyway
+    assert AIFixGenerator().needs_consent(make_issue()) is False   # no key
+
+    GeminiConfig.set_online_consent(False)
+    assert with_key.needs_consent(make_issue()) is False    # already answered
+
+
+# ---------------------------------------------------------------------------
+# AI analyzer (scan summary)
+# ---------------------------------------------------------------------------
+
+class FakeModel:
+    def __init__(self) -> None:
+        self.prompts: List[str] = []
+
+    def generate_content(self, prompt: str) -> Any:
+        self.prompts.append(prompt)
+
+        class Response:
+            text = '{"summary": "s", "overall_risk": "High"}'
+
+        return Response()
+
+
+def make_analyzer() -> tuple[GeminiAnalyzer, FakeModel]:
+    analyzer = GeminiAnalyzer(api_key=API_KEY)
+    model = FakeModel()
+    analyzer._client = model  # type: ignore[assignment]
+    return analyzer, model
+
+
+def make_result() -> ScanResult:
+    result = ScanResult(
+        target_path=r"C:\Users\someone\projects\shop", scan_id="test", scanner_name="test"
+    )
+    result.issues = [
+        make_issue(
+            title=f"SQL injection ({AWS_KEY})",
+            description=f'Query in {FULL_PATH} uses "{CONNECTION}" and password = "hunter2hunter2"',
+        ),
+        make_issue(
+            rule_id="SEC-AWS01",
+            title="Hardcoded AWS Access Key ID",
+            description="Detected a hardcoded AWS Access Key ID (AKIAIO...MPLE) in source code.",
+            category=IssueCategory.SECRET,
+        ),
+    ]
+    return result
+
+
+def test_analyzer_sends_nothing_without_consent() -> None:
+    analyzer, model = make_analyzer()
+
+    assert analyzer.analyze(make_result()) is None
+    assert model.prompts == []
+    assert "switched off" in analyzer.last_error
+
+
+def test_analyzer_prompt_is_redacted_and_skips_secret_findings(consent_given: None) -> None:
+    analyzer, model = make_analyzer()
+
+    assert analyzer.analyze(make_result()) is not None
+
+    (prompt,) = model.prompts
+    for value in (AWS_KEY, "Pa55word", "hunter2hunter2", "AKIAIO", "someone", "billing"):
+        assert value not in prompt
+    assert "Hardcoded AWS Access Key ID" not in prompt
+    assert "1 hardcoded-secret finding(s) are not listed" in prompt
+    assert "File: views.py:12" in prompt
+    assert "- Target: shop" in prompt
+
+
+def test_analyzer_error_has_no_key_and_no_url(consent_given: None) -> None:
+    analyzer, model = make_analyzer()
+
+    def fail(prompt: str) -> Any:
+        raise RuntimeError(f"POST https://generativelanguage.googleapis.com/x?key={API_KEY} refused")
+
+    model.generate_content = fail  # type: ignore[method-assign]
+
+    assert analyzer.analyze(make_result()) is None
+    assert API_KEY not in analyzer.last_error
+    assert "https://" not in analyzer.last_error

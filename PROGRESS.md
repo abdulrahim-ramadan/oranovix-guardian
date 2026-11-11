@@ -1,8 +1,8 @@
 # Oranovix Guardian — Development Progress
 
-## Type check and API key storage (branch `chore/types-and-api-key`)
+## Type check, API key storage and AI privacy (branch `chore/types-and-api-key`)
 
-Goal: a clean type check, and a Gemini API key that is really saved, without ever writing it to a plain-text file.
+Goal: a clean type check, a Gemini API key that is really saved without ever being written to a plain-text file, and no secret or unneeded code leaving the machine for the online AI.
 
 | Step | Change | Main files |
 |------|--------|-----------|
@@ -13,7 +13,13 @@ Goal: a clean type check, and a Gemini API key that is really saved, without eve
 | 5 | Settings page: Save and Remove buttons. Status shows "Key saved (••••1234)" with only the last 4 characters; the field is cleared after saving. A warning appears when the credential store is not available (Save is disabled) and a note when `GEMINI_API_KEY` is set and therefore wins. Texts in AR/DE/EN. | `gui/pages/settings_page.py`, `translations/` |
 | 6 | Dead `_saved_api_key` / `_api_entry` code removed from the main window. | `gui/app.py` |
 
-Tests: 142 passing (117 + 25 new in `tests/test_secret_store.py`). The new tests use an in-memory keyring backend and never touch the real Credential Manager. Type check: `uvx pyright`, 0 errors.
+| 7 | `Redactor.redact(text)` replaces secret values with `<REDACTED>`: everything matched by the `SecretsDetector` patterns (AWS, OpenAI, GitHub, JWT with its signature, a private key block up to its END line, the password in a connection string) and any string literal assigned to or compared with a name that contains password / secret / token / api_key / secret_key and the other names of the AST secrets rule. The patterns and names are read from the scanner, not copied, so a new scanner pattern is redacted automatically. | `core/redactor.py`, `scanner_engine/secrets_detector.py`, `scanner_engine/ast_analyzer.py` |
+| 8 | Every outbound AI text goes through the Redactor. The fix generator sends the title and the snippet, the analyzer sends titles and descriptions; both name the file without its folder, and the analyzer sends only the folder name of the scan target. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/ai_analyzer.py` |
+| 9 | A finding in the secret category never goes online (also when a secret rule was merged into it). It always gets the `OfflineFixDatabase` fix, and the analyzer leaves it out of the prompt and sends only how many there were. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/ai_analyzer.py` |
+| 10 | The API key is sent in the `x-goog-api-key` header; the URL has no query string. Failure messages contain only the HTTP status or the error type; analyzer errors pass through `GeminiConfig.safe_error_text`, which removes the key and any URL. | `scanner_engine/ai_fix_generator.py`, `scanner_engine/gemini_config.py` |
+| 11 | Consent. Nothing is sent unless `settings.json` holds `"ai_online_consent": "allow"`; the engines check this themselves, so the default is offline even without the UI. The first AI fix that would go online opens a dialog ("The vulnerable line will be sent to Google Gemini after secrets are removed. Allow?", Allow / Use offline only). Closing the dialog saves nothing and uses the offline fix. The choice can be changed with a switch in Settings. Texts in AR/DE/EN. | `gui/ai_consent_dialog.py`, `gui/pages/results_page.py`, `gui/pages/settings_page.py`, `translations/` |
+
+Tests: 187 passing (117 + 25 in `tests/test_secret_store.py` + 45 in `tests/test_ai_privacy.py`). The key tests use an in-memory keyring backend and never touch the real Credential Manager; the privacy tests replace the HTTP call and inspect the request, so no test reaches the network. Type check: `uvx pyright`, 0 errors.
 
 ### Notes for the next build
 
@@ -25,6 +31,9 @@ Tests: 142 passing (117 + 25 new in `tests/test_secret_store.py`). The new tests
 
 - A new key is used by the next AI request; no restart is needed. An AI request that is already running keeps the old key.
 - The settings page does not test the key against Google; a wrong key shows up at the first AI request.
+- The Redactor knows the formats the scanner knows. A secret in another format (for example a Google or Slack key, or an `OPENSSH` private key) that is passed as a plain argument, not assigned to a secret-like name, is not recognised.
+- Redaction is deliberately broad: a harmless string assigned to a name such as `token_type` is replaced too.
+- With the offline choice or without consent, the AI fix button still works and shows the offline fix.
 
 ---
 

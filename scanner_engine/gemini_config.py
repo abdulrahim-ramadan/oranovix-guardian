@@ -8,14 +8,19 @@ Google keeps pointed at the current Flash model.
 The API key is never read from ``settings.json``. It comes from the
 ``GEMINI_API_KEY`` environment variable or from the OS credential store
 (``core.secret_store.SecretStore``).
+
+Nothing is sent to the online AI unless the user allowed it
+(``ai_online_consent`` in ``settings.json``); the default is offline.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 from core.secret_store import SecretStore, SecretStoreError
 
@@ -25,6 +30,11 @@ DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_MODEL_SETTING = "gemini_model"
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 LEGACY_API_KEY_SETTING = "api_key"
+AI_ONLINE_CONSENT_SETTING = "ai_online_consent"
+CONSENT_ALLOW = "allow"
+CONSENT_OFFLINE = "offline"
+
+_URL = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 class GeminiModelNotFoundError(RuntimeError):
@@ -70,6 +80,47 @@ class GeminiConfig:
         cls.migrate_legacy_api_key()
         from_env = os.getenv(GEMINI_API_KEY_ENV, "").strip()
         return from_env or SecretStore().get()
+
+    # ------------------------------------------------------------------
+    # Consent for the online AI
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def online_consent(cls) -> Optional[bool]:
+        """Return the user's choice: ``True`` (allow), ``False`` (offline
+        only) or ``None`` when the user has not been asked yet."""
+        value = str(cls._read().get(AI_ONLINE_CONSENT_SETTING, "")).strip().lower()
+        if value == CONSENT_ALLOW:
+            return True
+        if value == CONSENT_OFFLINE:
+            return False
+        return None
+
+    @classmethod
+    def online_allowed(cls) -> bool:
+        """Only an explicit "allow" lets a request leave the machine."""
+        return cls.online_consent() is True
+
+    @classmethod
+    def set_online_consent(cls, allowed: bool) -> None:
+        data = cls._read()
+        data[AI_ONLINE_CONSENT_SETTING] = CONSENT_ALLOW if allowed else CONSENT_OFFLINE
+        try:
+            cls._write(data)
+        except OSError as exc:
+            logger.warning("settings.json could not be rewritten: %s", exc)
+
+    @staticmethod
+    def safe_error_text(exc: BaseException, api_key: str = "") -> str:
+        """Describe *exc* without the API key and without any URL."""
+        text = f"{type(exc).__name__}: {exc}"
+        if api_key:
+            text = text.replace(api_key, "<REDACTED>")
+        return _URL.sub("<URL removed>", text)
+
+    # ------------------------------------------------------------------
+    # Legacy key migration
+    # ------------------------------------------------------------------
 
     @classmethod
     def migrate_legacy_api_key(cls) -> bool:
