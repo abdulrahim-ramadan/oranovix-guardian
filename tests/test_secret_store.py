@@ -73,10 +73,10 @@ def read_settings(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_save_then_read(backend: FakeKeyring) -> None:
-    SecretStore().set("AIzaSy-test-key-1234")
+    SecretStore().set("test-gemini-key-1234")
 
-    assert SecretStore().get() == "AIzaSy-test-key-1234"
-    assert backend.passwords == {(SERVICE_NAME, GEMINI_KEY_NAME): "AIzaSy-test-key-1234"}
+    assert SecretStore().get() == "test-gemini-key-1234"
+    assert backend.passwords == {(SERVICE_NAME, GEMINI_KEY_NAME): "test-gemini-key-1234"}
 
 
 def test_service_name_is_fixed() -> None:
@@ -88,9 +88,9 @@ def test_read_without_a_saved_key_is_empty(backend: FakeKeyring) -> None:
 
 
 def test_saved_key_is_stripped(backend: FakeKeyring) -> None:
-    SecretStore().set("  AIzaSy-test-key-1234\n")
+    SecretStore().set("  test-gemini-key-1234\n")
 
-    assert SecretStore().get() == "AIzaSy-test-key-1234"
+    assert SecretStore().get() == "test-gemini-key-1234"
 
 
 def test_empty_key_is_rejected(backend: FakeKeyring) -> None:
@@ -101,7 +101,7 @@ def test_empty_key_is_rejected(backend: FakeKeyring) -> None:
 
 def test_remove(backend: FakeKeyring) -> None:
     store = SecretStore()
-    store.set("AIzaSy-test-key-1234")
+    store.set("test-gemini-key-1234")
 
     store.delete()
 
@@ -123,7 +123,7 @@ def test_broken_keyring_reads_empty_and_refuses_writes(no_backend: None) -> None
     assert store.is_available() is False
     assert store.get() == ""
     with pytest.raises(SecretStoreError):
-        store.set("AIzaSy-test-key-1234")
+        store.set("test-gemini-key-1234")
     with pytest.raises(SecretStoreError):
         store.delete()
 
@@ -131,7 +131,7 @@ def test_broken_keyring_reads_empty_and_refuses_writes(no_backend: None) -> None
 @pytest.mark.parametrize(
     "value, masked",
     [
-        ("AIzaSy-test-key-1234", "••••1234"),
+        ("test-gemini-key-1234", "••••1234"),
         ("12345678", "••••5678"),
         ("short", "••••"),
         ("", ""),

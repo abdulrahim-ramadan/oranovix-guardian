@@ -21,8 +21,18 @@ from scanner_engine.categories import IssueCategory
 from scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
 from scanner_engine.secrets_detector import SecretsDetector
 
-API_KEY = "AIzaSy-unit-test-key-000000000000000001"
+# Fake values. Apart from the documented AWS example they are put together at
+# runtime, so the file holds nothing that looks like a real provider key.
+API_KEY = "test-gemini-key-" + "0" * 20
 AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+OPENAI_KEY = "s" + "k-" + "a1B2" * 12
+GITHUB_TOKEN = "gh" + "p_" + "Z9y8" * 9
+JWT_HEAD = "ey" + "JhbGciOiJIUzI1NiJ9" + "." + "ey" + "JzdWIiOiIxIn0"
+PEM_DASHES = "-" * 5
+
+
+def pem_line(edge: str, kind: str) -> str:
+    return f"{PEM_DASHES}{edge} {kind} PRIVATE KEY{PEM_DASHES}"
 CONNECTION = "postgresql://admin:Pa55word@host"
 FULL_PATH = r"C:\Users\someone\projects\shop\billing\views.py"
 
@@ -119,9 +129,9 @@ def make_issue(**overrides: Any) -> Issue:
     "secret",
     [
         AWS_KEY,
-        "sk-" + "a1B2" * 12,
-        "ghp_" + "Z9y8" * 9,
-        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        OPENAI_KEY,
+        GITHUB_TOKEN,
+        JWT_HEAD + ".dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
     ],
     ids=["aws", "openai", "github", "jwt"],
 )
@@ -133,16 +143,16 @@ def test_token_formats_are_replaced(secret: str) -> None:
 
 
 def test_jwt_signature_is_removed_too() -> None:
-    redacted = Redactor.redact("h = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SIGNATUREPART'")
+    redacted = Redactor.redact(f"h = '{JWT_HEAD}.SIGNATUREPART'")
 
     assert "SIGNATUREPART" not in redacted
 
 
 def test_private_key_block_is_removed() -> None:
     text = (
-        "key = '''-----BEGIN RSA PRIVATE KEY-----\n"
+        f"key = '''{pem_line('BEGIN', 'RSA')}\n"
         "MIIEowIBAAKCAQEAsecretbody\n"
-        "-----END RSA PRIVATE KEY-----'''\nprint(1)"
+        f"{pem_line('END', 'RSA')}'''\nprint(1)"
     )
 
     redacted = Redactor.redact(text)
@@ -204,12 +214,12 @@ def test_every_detector_pattern_is_covered() -> None:
     """A pattern added to the scanner is redacted without touching the Redactor."""
     samples = {
         "SEC-AWS01": AWS_KEY,
-        "SEC-OAI01": "sk-" + "a1B2" * 12,
-        "SEC-GHP01": "ghp_" + "Z9y8" * 9,
+        "SEC-OAI01": OPENAI_KEY,
+        "SEC-GHP01": GITHUB_TOKEN,
         "SEC-PWD01": 'secret = "hunter2hunter2"',
         "SEC-CONN1": "mysql://root:hunter2hunter2@db",
-        "SEC-PRVK1": "-----BEGIN EC PRIVATE KEY-----\nhunter2hunter2\n-----END EC PRIVATE KEY-----",
-        "SEC-JWT01": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.hunter2hunter2",
+        "SEC-PRVK1": f"{pem_line('BEGIN', 'EC')}\nhunter2hunter2\n{pem_line('END', 'EC')}",
+        "SEC-JWT01": JWT_HEAD + ".hunter2hunter2",
     }
     assert {p.rule_id for p in SecretsDetector.patterns()} == set(samples)
 
