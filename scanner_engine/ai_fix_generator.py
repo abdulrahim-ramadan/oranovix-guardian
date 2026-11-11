@@ -10,10 +10,14 @@ Provides two complementary fix generation strategies:
    user allowed online requests; otherwise, and on any failure, it falls
    back to OfflineFixDatabase.  Results are cached in memory.
 
-What leaves the machine: only the finding's title and code snippet, after
-``core.redactor.Redactor`` removed secrets, with the file named without
-its folder.  A finding in the secret category is never sent.  The API key
-travels in the ``x-goog-api-key`` header, never in the URL.
+What leaves the machine: only the finding's title and code snippet, with
+the file named without its folder.  ``core.redactor.Redactor`` replaces
+the content of every string literal and every long value in the snippet
+by a placeholder (``<STR_1>``, ``<VALUE_1>``) before it is sent.  The fix
+that comes back may contain those placeholders; it is shown as returned
+and the real values are never put back.  A finding in the secret category
+is never sent.  The API key travels in the ``x-goog-api-key`` header,
+never in the URL.
 
 Version: 1.0.0
 """
@@ -376,16 +380,21 @@ class AIFixGenerator:
     def _build_prompt(issue: Issue, code: str) -> str:
         """Compose the prompt. Every piece of scan data in it has been
         through the Redactor, and the file is named without its folder."""
-        def clean(text: str) -> str:
-            return Redactor.redact(Redactor.hide_path(text, issue.file_path))
-
-        snippet = clean(issue.code_snippet or (code[:400] if code else "")) or "N/A"
+        title = Redactor.redact(Redactor.hide_path(issue.title, issue.file_path))
+        snippet = Redactor.redact_code(
+            issue.code_snippet or (code[:400] if code else ""),
+            Redactor.file_name(issue.file_path),
+        ) or "N/A"
 
         return (
             f"You are a security expert. This code has a {issue.severity.value} "
-            f"vulnerability: {clean(issue.title)}\n\n"
+            f"vulnerability: {title}\n\n"
             f"Vulnerable code ({Redactor.file_name(issue.file_path)}, "
             f"line {issue.line_number}):\n{snippet}\n\n"
+            "String contents, long values and comments were replaced by "
+            "placeholders such as <STR_1>, <VALUE_1> or <COMMENT>. Keep the "
+            "placeholders exactly as "
+            "they are in your answer.\n\n"
             "Provide:\n"
             "1. Fixed code (just the corrected lines, no explanation in code)\n"
             "2. One sentence explanation of why the fix works\n"

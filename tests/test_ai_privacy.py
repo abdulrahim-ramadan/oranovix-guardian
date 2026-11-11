@@ -1,6 +1,7 @@
 """Nothing secret leaves the machine: redaction, consent, and the request itself."""
 from __future__ import annotations
 
+import base64
 import io
 import json
 import urllib.error
@@ -29,6 +30,11 @@ OPENAI_KEY = "s" + "k-" + "a1B2" * 12
 GITHUB_TOKEN = "gh" + "p_" + "Z9y8" * 9
 JWT_HEAD = "ey" + "JhbGciOiJIUzI1NiJ9" + "." + "ey" + "JzdWIiOiIxIn0"
 PEM_DASHES = "-" * 5
+STRIPE_KEY = "sk" + "_live_" + "51Hx9QaZz8vT"
+PLAIN_PASSWORD = "hunter2pass"
+WEAK_PASSWORD = "Winter2026!"
+HEX_TOKEN = "9f86d081884c7d65" + "9a2feaa0c55ad015"
+BASIC_VALUE = base64.b64encode(f"admin:{PLAIN_PASSWORD}".encode()).decode()
 
 
 def pem_line(edge: str, kind: str) -> str:
@@ -255,8 +261,7 @@ def test_snippet_is_sent_without_the_secret_values(http: FakeHttp, consent_given
     assert AWS_KEY not in sent
     assert CONNECTION not in sent
     assert "Pa55word" not in sent
-    assert sent.count(REDACTED) == 2
-    assert "cursor.execute" in sent  # the vulnerable code itself still arrives
+    assert 'aws = "<STR_1>"; db = connect("<STR_2>"); cursor.execute("<STR_3>" % user_id)' in sent
 
 
 def test_nothing_in_the_whole_request_carries_the_secrets(
@@ -296,6 +301,149 @@ def test_code_fallback_is_redacted_when_there_is_no_snippet(
 
     assert AWS_KEY not in http.sent_text
     assert "run(x)" in http.sent_text
+
+
+# ---------------------------------------------------------------------------
+# Allowlist redaction of code
+# ---------------------------------------------------------------------------
+
+def test_unknown_secret_formats_never_reach_the_request_body(
+    http: FakeHttp, consent_given: None
+) -> None:
+    snippet = "\n".join([
+        f'r = requests.get(url, auth=("admin", "{PLAIN_PASSWORD}"),',
+        f'                 headers={{"X-Api-Key": "{STRIPE_KEY}", "Authorization": "Basic {BASIC_VALUE}"}})',
+        f"login(user, '{WEAK_PASSWORD}')",
+        f"session_id = {HEX_TOKEN}",
+        f"curl -H Authorization: Basic {BASIC_VALUE}",
+    ])
+
+    AIFixGenerator(api_key=API_KEY).generate_fix(make_issue(code_snippet=snippet))
+
+    request = http.requests[0]
+    assert isinstance(request.data, bytes)
+    body = request.data.decode("utf-8")
+    for value in (STRIPE_KEY, PLAIN_PASSWORD, WEAK_PASSWORD, HEX_TOKEN, BASIC_VALUE, "admin"):
+        assert value not in body
+    # The structure of the code still arrives.
+    sent = http.sent_text
+    assert "requests.get(" in sent
+    assert "auth=(" in sent
+    assert "headers={" in sent
+    assert "login(user, " in sent
+
+
+def test_string_contents_become_numbered_placeholders() -> None:
+    redacted = Redactor.redact_code(
+        f'r = requests.get(url, auth=("admin", "{PLAIN_PASSWORD}"), verify="{PLAIN_PASSWORD}")'
+    )
+
+    # Same value, same placeholder; quotes stay so the type is still visible.
+    assert redacted == 'r = requests.get(url, auth=("<STR_1>", "<STR_2>"), verify="<STR_2>")'
+
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("a = 'single quoted'", "a = '<STR_1>'"),
+        ('a = "double quoted"', 'a = "<STR_1>"'),
+        ('a = """triple\nquoted"""', 'a = """<STR_1>"""'),
+        ("a = '''triple\nquoted'''", "a = '''<STR_1>'''"),
+        ('a = r"raw\\d+" + b"bytes" + rb"both"', 'a = r"<STR_1>" + b"<STR_2>" + rb"<STR_3>"'),
+        ('a = "it\'s \\"escaped\\" inside"', 'a = "<STR_1>"'),
+        ('a = f"SELECT * FROM t WHERE id = {user_id}"', 'a = f"<STR_1>{user_id}"'),
+        ("a = f\"{d['secret key']}!\"", "a = f\"{d['<STR_1>']}!\""),
+        ("const a = `Bearer ${token} for user`;", "const a = `<STR_1>${token}<STR_2>`;"),
+        ('var a = $"Server={host};Password=hunter2"; ', 'var a = $"<STR_1>{host}<STR_2>"; '),
+        ('var a = @"C:\\dir\\""quoted""";', 'var a = @"<STR_1>";'),
+        ("$a = ['key' => 'value one', \"k\" => \"value two\"];", "$a = ['<STR_1>' => '<STR_2>', \"k\" => \"<STR_3>\"];"),
+        ('String a = "text" + \'c\' + "more";', 'String a = "<STR_1>" + \'c\' + "<STR_2>";'),
+    ],
+    ids=[
+        "single", "double", "triple-double", "triple-single", "prefixes", "escapes",
+        "f-string", "f-string-nested", "js-template", "csharp-interpolated",
+        "csharp-verbatim", "php", "java-char",
+    ],
+)
+def test_string_literal_forms(code: str, expected: str) -> None:
+    assert Redactor.redact_code(code) == expected
+
+
+@pytest.mark.parametrize(
+    "code",
+    ['a = ""', "a = ''", 'a = """"""', "sep = ','", "nl = '\\n'", 'x = d[""] + "/"'],
+)
+def test_empty_strings_and_single_characters_are_kept(code: str) -> None:
+    assert Redactor.redact_code(code) == code
+
+
+def test_unterminated_string_is_redacted_to_the_end_of_the_line() -> None:
+    redacted = Redactor.redact_code(f'x = connect("user", "{PLAIN_PASSWORD}\ny = 1')
+
+    assert PLAIN_PASSWORD not in redacted
+    assert redacted.endswith("\ny = 1")
+
+
+def test_long_mixed_tokens_outside_strings_are_replaced() -> None:
+    redacted = Redactor.redact_code(f"API_TOKEN={HEX_TOKEN}\nOTHER={HEX_TOKEN}\nKEY={STRIPE_KEY}")
+
+    assert redacted == "API_TOKEN=<VALUE_1>\nOTHER=<VALUE_1>\nKEY=<VALUE_2>"
+
+
+def test_ordinary_names_and_called_functions_survive() -> None:
+    code = "obj = get_object_or_404(Model, pk=pk)\nvalue = urlsafe_base64_decode(uid)\ntotal = count + 1"
+
+    assert Redactor.redact_code(code) == code
+
+
+@pytest.mark.parametrize(
+    "code, file_name, expected",
+    [
+        (f"x = 1  # password is {WEAK_PASSWORD}", "views.py", "x = 1  # <COMMENT>"),
+        (f"int x = 1; // password is {WEAK_PASSWORD}", "App.java", "int x = 1; // <COMMENT>"),
+        (f"/* pw {WEAK_PASSWORD} */ run();", "app.js", "/* <COMMENT> */ run();"),
+        (f"# pw {WEAK_PASSWORD}\n// pw {WEAK_PASSWORD}", "", "# <COMMENT>\n// <COMMENT>"),
+        ("half = total // 2  # floor", "views.py", "half = total // 2  # <COMMENT>"),
+        ("#region Config\nvar x = 1;", "App.cs", "#region Config\nvar x = 1;"),
+    ],
+    ids=["python", "java", "block", "unknown-language", "python-floor-division", "csharp-directive"],
+)
+def test_comment_text_is_removed(code: str, file_name: str, expected: str) -> None:
+    assert Redactor.redact_code(code, file_name) == expected
+
+
+def test_pattern_pass_still_runs_as_a_second_layer() -> None:
+    # Outside any string, so only the pattern layer can catch the password.
+    redacted = Redactor.redact_code(f"DATABASE_URL={CONNECTION}/shop")
+
+    assert "Pa55word" not in redacted
+    assert REDACTED in redacted
+
+
+def test_code_redaction_is_stable_when_applied_twice() -> None:
+    code = (
+        f'a = f"x {{y}} {PLAIN_PASSWORD}"  # note\n'
+        f"TOKEN={HEX_TOKEN}\nb = connect('{CONNECTION}')"
+    )
+    once = Redactor.redact_code(code, "views.py")
+
+    assert Redactor.redact_code(once, "views.py") == once
+
+
+def test_fix_is_shown_as_returned_with_placeholders(
+    http: FakeHttp, consent_given: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    returned = 'requests.get(url, auth=("<STR_1>", "<STR_2>"), timeout=10)'
+    monkeypatch.setattr(
+        ai_fix_generator.urllib.request, "urlopen",
+        lambda request, timeout=0: FakeResponse(json.dumps({"fixed_code": returned})),
+    )
+    issue = make_issue(code_snippet=f'requests.get(url, auth=("admin", "{PLAIN_PASSWORD}"))')
+
+    suggestion = AIFixGenerator(api_key=API_KEY).generate_fix(issue)
+
+    assert suggestion.fixed_code == returned
+    assert PLAIN_PASSWORD not in suggestion.fixed_code
 
 
 # ---------------------------------------------------------------------------
