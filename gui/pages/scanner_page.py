@@ -688,7 +688,8 @@ class ScannerPage(ctk.CTkFrame):
         )
         self._prog_lbl.configure(text="")
 
-        if error:
+        if error or result is None:
+            error = error or "Scan returned no result"
             self._log.append(f"Scan failed: {error}", "error")
             self._on_status(f"✗  {error}", "error")
             SoundManager().play("error")

@@ -211,7 +211,9 @@ def test_django_scan_is_deterministic(result: ScanResult) -> None:
 
 def tainted_sinks(source: str) -> Dict[int, bool]:
     """Line -> taint of the argument, for every ``sink(...)`` call in *source*."""
-    tracker = TaintTracker(ast.parse(source).body[0])
+    scope = ast.parse(source).body[0]
+    assert isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+    tracker = TaintTracker(scope)
     return {
         call.lineno: tracker.is_tainted(call.args[0])
         for call in tracker.calls()

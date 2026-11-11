@@ -134,9 +134,10 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         crash the application at startup.
         """
         try:
-            import google.generativeai as genai  # type: ignore
-            genai.configure(api_key=self._api_key)
-            self._client = genai.GenerativeModel(self._model)
+            from google.generativeai.client import configure  # type: ignore
+            from google.generativeai.generative_models import GenerativeModel  # type: ignore
+            configure(api_key=self._api_key)
+            self._client = GenerativeModel(self._model)
         except Exception as exc:
             # Leave self._client as None; is_available() will return False.
             self._client = None

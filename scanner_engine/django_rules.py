@@ -13,7 +13,7 @@ from typing import ClassVar, FrozenSet, Iterator, List, Optional, Sequence, Set,
 
 from .base import Issue, Severity
 from .categories import IssueCategory, category_for_rule
-from .taint import TaintTracker, dotted_name, is_request
+from .taint import Scope, TaintTracker, dotted_name, is_request
 from .vulnerability_db import VulnerabilityDatabase
 
 _FunctionNode = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -628,6 +628,6 @@ class DjangoAnalyzer:
         return issues
 
     @staticmethod
-    def _scopes(tree: ast.Module) -> List[ast.AST]:
+    def _scopes(tree: ast.Module) -> List[Scope]:
         functions = [node for node in ast.walk(tree) if isinstance(node, _FunctionNode)]
         return [tree, *functions]

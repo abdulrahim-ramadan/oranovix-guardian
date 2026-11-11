@@ -404,8 +404,9 @@ class CodeGuardianApp(ctk.CTk):
         the new SettingsPage is created.
         """
         # Preserve the API key entered by the user before destroying widgets
-        if hasattr(self, "_api_entry"):
-            self._saved_api_key = self._api_entry.get()
+        api_entry = getattr(self, "_api_entry", None)
+        if api_entry is not None:
+            self._saved_api_key = api_entry.get()
 
         # Overlay covers the window to create a smooth visual transition
         tm = ThemeManager()

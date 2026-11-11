@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import urllib.error
+import urllib.request
 from dataclasses import dataclass, replace
 from typing import Callable, Dict, Optional
 
@@ -347,8 +348,6 @@ class AIFixGenerator:
         Raises:
             Exception: On any network, parse, or API error.
         """
-        import urllib.request
-
         snippet = issue.code_snippet or (code[:400] if code else "N/A")
 
         prompt = (

@@ -872,14 +872,15 @@ class ResultsPage(ctk.CTkFrame):
         )
         self._export_btn.pack(side="right", padx=16, pady=10)
 
-        if self._on_navigate:
+        on_navigate = self._on_navigate
+        if on_navigate:
             ctk.CTkButton(
                 hdr,
                 text="🔍  Quick Scan",
                 font=ctk.CTkFont(size=11),
                 fg_color=tm.c("bg3"), hover_color=tm.c("hover"),
                 text_color=tm.c("accent"), corner_radius=6, height=30, width=120,
-                command=lambda: self._on_navigate("scanner"),
+                command=lambda: on_navigate("scanner"),
             ).pack(side="right", padx=(0, 8), pady=10)
 
         # ── Scrollable body ───────────────────────────────────────────

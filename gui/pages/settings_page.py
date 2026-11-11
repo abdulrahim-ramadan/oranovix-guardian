@@ -23,6 +23,8 @@ Version: 1.1.0
 """
 from __future__ import annotations
 
+from typing import Literal
+
 import os
 from tkinter import filedialog
 
@@ -280,11 +282,12 @@ class SettingsPage(ctk.CTkFrame):
         about_sec.pack(fill="x", pady=(0, 20))
 
         # Each tuple: (text, font_size, weight, theme_color_key)
-        for line in [
+        about_lines: list[tuple[str, int, Literal["normal", "bold"], str]] = [
             ("Oranovix Guardian", 14, "bold", "text"),
             ("Professional Security Scanner  •  v1.0.0", 11, "normal", "text2"),
             ("100% free — powered by Bandit, Gemini & ReportLab", 10, "normal", "text3"),
-        ]:
+        ]
+        for line in about_lines:
             ctk.CTkLabel(
                 about_sec, text=line[0],
                 font=ctk.CTkFont(size=line[1], weight=line[2]),

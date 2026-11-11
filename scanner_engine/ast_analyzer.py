@@ -73,7 +73,7 @@ class DangerousFunctionRule(ASTRule):
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
 
-        if func_name not in self._DANGEROUS:
+        if func_name is None or func_name not in self._DANGEROUS:
             return []
 
         return [Issue(
@@ -186,7 +186,7 @@ class HardcodedSecretsRule(ASTRule):
             elif isinstance(target, ast.Attribute):
                 var_name = target.attr.lower()
 
-            if var_name not in self._SECRET_NAMES:
+            if var_name is None or var_name not in self._SECRET_NAMES:
                 continue
 
             value = node.value

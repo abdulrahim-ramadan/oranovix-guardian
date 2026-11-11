@@ -207,7 +207,8 @@ class LanguageManager:
             import arabic_reshaper              # type: ignore
             from bidi.algorithm import get_display  # type: ignore
             reshaped = arabic_reshaper.reshape(text)
-            return get_display(reshaped)
+            displayed = get_display(reshaped)
+            return displayed if isinstance(displayed, str) else text
         except Exception:
             return text
 

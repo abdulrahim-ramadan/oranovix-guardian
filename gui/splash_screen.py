@@ -57,7 +57,7 @@ class SplashScreen(ctk.CTkToplevel):
             try:
                 from PIL import Image
                 pil_img = Image.open(icon_path)
-                pil_img.thumbnail((150, 150), Image.LANCZOS)
+                pil_img.thumbnail((150, 150), Image.Resampling.LANCZOS)
                 self.logo_image = ctk.CTkImage(
                     light_image=pil_img,
                     dark_image=pil_img,
