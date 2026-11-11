@@ -1,5 +1,33 @@
 # Oranovix Guardian — Development Progress
 
+## Type check and API key storage (branch `chore/types-and-api-key`)
+
+Goal: a clean type check, and a Gemini API key that is really saved, without ever writing it to a plain-text file.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | Type check with pyright: `pyrightconfig.json` uses the project `venv` and skips `tests/corpus` (broken on purpose). 45 errors in application code fixed. `gui/dashboard.py` deleted: it imported names that do not exist and nothing used it. | `pyrightconfig.json`, 14 source files |
+| 2 | `SecretStore` keeps the key in the OS credential store through `keyring` (Windows Credential Manager, service `OranovixGuardian`, entry `gemini_api_key`): `get()`, `set()`, `delete()`, `is_available()`, `mask()`. When no credential store works, `get()` returns nothing, `set()` and `delete()` raise `SecretStoreError`, and only the `GEMINI_API_KEY` environment variable is used. | `core/secret_store.py` |
+| 3 | One key lookup for both AI engines: `GeminiConfig.api_key()` reads the environment variable first, then `SecretStore`. `settings.json` is no longer a key source. | `scanner_engine/gemini_config.py`, `scanner_engine/ai_analyzer.py`, `scanner_engine/ai_fix_generator.py` |
+| 4 | One-time migration: an old `"api_key"` in `settings.json` is moved into `SecretStore` and deleted from the file (settings page start and every key lookup). A key already saved through the settings page is not overwritten. If the credential store is not usable, the entry stays in the file so the key is not lost, and the move is tried again next time. | `scanner_engine/gemini_config.py` |
+| 5 | Settings page: Save and Remove buttons. Status shows "Key saved (••••1234)" with only the last 4 characters; the field is cleared after saving. A warning appears when the credential store is not available (Save is disabled) and a note when `GEMINI_API_KEY` is set and therefore wins. Texts in AR/DE/EN. | `gui/pages/settings_page.py`, `translations/` |
+| 6 | Dead `_saved_api_key` / `_api_entry` code removed from the main window. | `gui/app.py` |
+
+Tests: 142 passing (117 + 25 new in `tests/test_secret_store.py`). The new tests use an in-memory keyring backend and never touch the real Credential Manager. Type check: `uvx pyright`, 0 errors.
+
+### Notes for the next build
+
+- New dependency: `keyring` (`src/requirements.txt`).
+- PyInstaller needs: `--hidden-import keyring.backends.Windows`.
+- Not checked in a built exe yet. If the exe reports "secure storage is not available", also add `--copy-metadata keyring`.
+
+### Known limits
+
+- A new key is used by the next AI request; no restart is needed. An AI request that is already running keeps the old key.
+- The settings page does not test the key against Google; a wrong key shows up at the first AI request.
+
+---
+
 ## Phase 1 — Django and DRF rules (branch `feature/django-rules`)
 
 Goal: find the typical Django mistakes with few false alarms. Rules that depend on user input use a taint tracker instead of pattern matching. Python `ast` only, no new dependencies.

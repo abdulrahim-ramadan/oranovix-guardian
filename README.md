@@ -83,6 +83,7 @@ venv\Scripts\pyinstaller --onefile --windowed ^
   --name="Oranovix Guardian" ^
   --add-data="assets;assets" ^
   --add-data="translations;translations" ^
+  --hidden-import keyring.backends.Windows ^
   main.py
 ```
 

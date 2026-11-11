@@ -19,7 +19,6 @@ Version: 1.1.0
 """
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional
@@ -113,13 +112,13 @@ class GeminiAnalyzer(BaseAIAnalyzer):
         """Initialise the Gemini analyzer and attempt to create the API client.
 
         Args:
-            api_key: Explicit Gemini API key.  When omitted the key is read
-                     from the ``GEMINI_API_KEY`` environment variable.  If
-                     neither source provides a key, the analyzer degrades
-                     gracefully to ``is_available() == False``.
+            api_key: Explicit Gemini API key.  When omitted the key comes
+                     from ``GeminiConfig.api_key()`` (environment variable,
+                     then the credential store).  If no source provides a
+                     key, the analyzer degrades gracefully to
+                     ``is_available() == False``.
         """
-        # Prefer an explicitly-supplied key; fall back to the environment variable.
-        self._api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self._api_key = api_key or GeminiConfig.api_key()
         self._model = model or GeminiConfig.model_name()
         self._last_error = ""
         self._client = None

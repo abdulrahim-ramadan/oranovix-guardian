@@ -199,5 +199,15 @@
   "rule_title_DS005": "CORS allows every origin",
   "rule_title_DS006": "HTTPS is not enforced (SSL redirect / HSTS)",
   "rule_title_DT001": "Template variable marked |safe",
-  "rule_title_DT002": "Template auto-escaping switched off"
+  "rule_title_DT002": "Template auto-escaping switched off",
+  "api_key_save": "Save",
+  "api_key_remove": "Remove",
+  "api_key_saved": "Key saved ({masked})",
+  "api_key_none": "No key saved",
+  "api_key_removed": "Key removed",
+  "api_key_empty": "Enter a key first.",
+  "api_key_save_failed": "The key could not be saved: {error}",
+  "api_key_remove_failed": "The key could not be removed: {error}",
+  "api_key_env_active": "The GEMINI_API_KEY environment variable is set and is used first.",
+  "api_key_store_unavailable": "Secure storage is not available on this system, so the key cannot be saved. Set the GEMINI_API_KEY environment variable instead."
 }

@@ -12,8 +12,9 @@ widget that exposes every user-configurable preference:
 - **Sound Alerts** — enable / disable audio feedback, adjust volume with a
   slider, and test each of the three named tones via
   :class:`~core.sound_manager.SoundManager`.
-- **AI Analysis** — enter an optional Google Gemini API key for AI-powered
-  code analysis.
+- **AI Analysis** — save or remove an optional Google Gemini API key. The
+  key is kept in the OS credential store
+  (:class:`~core.secret_store.SecretStore`), never in ``settings.json``.
 - **About** — static product information.
 
 The page is built once per application run (or UI rebuild) by
@@ -32,7 +33,9 @@ import customtkinter as ctk
 
 from gui.theme_manager        import ThemeManager
 from core.language_manager    import LanguageManager
+from core.secret_store        import SecretStore, SecretStoreError
 from core.sound_manager       import SoundManager
+from scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
 from scanner_engine.rule_engine import RuleEngine, Rule, RuleLanguage
 
 
@@ -102,6 +105,7 @@ class SettingsPage(ctk.CTkFrame):
         self._on_lang  = on_lang_change
         # Obtain the singleton SoundManager to read and update sound settings
         self._sm       = SoundManager()
+        self._secrets  = SecretStore()
         self._build()
 
     def _build(self) -> None:
@@ -271,6 +275,45 @@ class SettingsPage(ctk.CTkFrame):
             fg_color="transparent",
         ).pack(anchor="w", pady=(4, 0))
 
+        key_row = ctk.CTkFrame(ai_body, fg_color="transparent")
+        key_row.pack(fill="x", pady=(8, 0))
+        self._api_save_btn = ctk.CTkButton(
+            key_row, text=lm.t("api_key_save"),
+            width=100, height=28, corner_radius=6,
+            fg_color=tm.c("accent"), hover_color=tm.c("accent_h"),
+            text_color="#ffffff", font=ctk.CTkFont(size=10),
+            command=self._save_api_key,
+        )
+        self._api_save_btn.pack(side="left", padx=(0, 6))
+        self._api_remove_btn = ctk.CTkButton(
+            key_row, text=lm.t("api_key_remove"),
+            width=100, height=28, corner_radius=6,
+            fg_color=tm.c("bg3"), hover_color=tm.c("hover"),
+            text_color=tm.c("text2"), font=ctk.CTkFont(size=10),
+            command=self._remove_api_key,
+        )
+        self._api_remove_btn.pack(side="left")
+        # Shows "Key saved (••••1234)", or the reason a save/remove failed
+        self._api_status_lbl = ctk.CTkLabel(
+            key_row, text="",
+            font=ctk.CTkFont(size=10), text_color=tm.c("text2"),
+            fg_color="transparent", anchor="w",
+        )
+        self._api_status_lbl.pack(side="left", padx=(12, 0))
+
+        # Shown when the key cannot be stored, or the env var overrides it
+        self._api_note_lbl = ctk.CTkLabel(
+            ai_body, text="",
+            font=ctk.CTkFont(size=9), text_color=tm.c("warning"),
+            fg_color="transparent", anchor="w", justify="left", wraplength=520,
+        )
+        self._api_note_lbl.pack(anchor="w", pady=(6, 0))
+
+        # A key left in settings.json by an older version is moved into the
+        # credential store before the status is shown.
+        GeminiConfig.migrate_legacy_api_key()
+        self._refresh_api_key_status()
+
         # ── Rules Manager ─────────────────────────────────────────────
         rules_sec = _Section(scroll, f"\U0001f4cb  {lm.t('rules_manager')}")
         rules_sec.pack(fill="x", pady=(0, 12))
@@ -319,6 +362,72 @@ class SettingsPage(ctk.CTkFrame):
         """
         self._sm.volume = value / 100      # normalise to 0.0–1.0
         self._vol_lbl.configure(text=f"{int(value)}%")
+
+    # ------------------------------------------------------------------
+    # API key handlers
+    # ------------------------------------------------------------------
+
+    def _refresh_api_key_status(self, message: str = "", error: bool = False) -> None:
+        """Show whether a key is stored and any storage warning.
+
+        Args:
+            message: Text to show instead of the stored-key status, for
+                     example the reason a save failed.
+            error:   Show *message* in the error colour.
+        """
+        tm = ThemeManager()
+        lm = LanguageManager()
+        available = self._secrets.is_available()
+        stored = self._secrets.get() if available else ""
+
+        if message:
+            status, color = message, tm.c("error") if error else tm.c("text2")
+        elif stored:
+            status = lm.t("api_key_saved", masked=SecretStore.mask(stored))
+            color = tm.c("success")
+        else:
+            status, color = lm.t("api_key_none"), tm.c("text3")
+        self._api_status_lbl.configure(text=status, text_color=color)
+
+        notes = []
+        if not available:
+            notes.append(lm.t("api_key_store_unavailable"))
+        if os.getenv(GEMINI_API_KEY_ENV, "").strip():
+            notes.append(lm.t("api_key_env_active"))
+        self._api_note_lbl.configure(text="\n".join(notes))
+
+        self._api_save_btn.configure(state="normal" if available else "disabled")
+        self._api_remove_btn.configure(state="normal" if stored else "disabled")
+
+    def _save_api_key(self) -> None:
+        """Store the typed key in the credential store and clear the field."""
+        lm = LanguageManager()
+        key = self._api_entry.get().strip()
+        if not key:
+            self._refresh_api_key_status(lm.t("api_key_empty"), error=True)
+            return
+        try:
+            self._secrets.set(key)
+        except SecretStoreError as exc:
+            self._refresh_api_key_status(
+                lm.t("api_key_save_failed", error=str(exc)), error=True
+            )
+            return
+        self._api_entry.delete(0, "end")
+        self._refresh_api_key_status()
+
+    def _remove_api_key(self) -> None:
+        """Delete the key from the credential store."""
+        lm = LanguageManager()
+        try:
+            self._secrets.delete()
+        except SecretStoreError as exc:
+            self._refresh_api_key_status(
+                lm.t("api_key_remove_failed", error=str(exc)), error=True
+            )
+            return
+        self._api_entry.delete(0, "end")
+        self._refresh_api_key_status(lm.t("api_key_removed"))
 
     def refresh_theme(self) -> None:
         """Re-apply the background colour after a theme change."""
