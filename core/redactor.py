@@ -33,6 +33,17 @@ _HASH_COMMENT_ONLY = frozenset({
     ".toml", ".ini", ".cfg", ".conf", ".env", ".tf", ".hcl", ".properties",
 })
 
+# Files that hold settings, not code: there every unquoted value is data.
+_CONFIG_FILES = frozenset({
+    ".env", ".ini", ".cfg", ".conf", ".properties", ".yaml", ".yml", ".toml",
+})
+_CONFIG_LINE = re.compile(
+    r"^(?P<head>[ \t]*(?:export[ \t]+|-[ \t]+)?[\w.\-]+[ \t]*[=:][ \t]*)(?P<value>[^\r\n]*)$",
+    re.MULTILINE,
+)
+_CONFIG_KEEP = frozenset({"true", "false", "yes", "no", "on", "off", "null", "none", "~"})
+_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
 _QUOTES = "\"'`"
 _STRING_PREFIX_CHARS = "rRbBuUfF@$"
 _PLACEHOLDER = re.compile(r"<(?:STR|VALUE)_\d+>|<REDACTED>|<COMMENT>")
@@ -48,10 +59,35 @@ class _CodeRedaction:
     def __init__(self, file_name: str = "") -> None:
         self._strings: Dict[str, str] = {}
         self._values: Dict[str, str] = {}
+        name = PureWindowsPath(file_name).name.lower()
         suffix = PureWindowsPath(file_name).suffix.lower()
+        self._is_config = name.startswith(".env") or suffix in _CONFIG_FILES
         # Which comment styles the language has. Unknown files get both.
-        self._hash_comments = suffix not in _SLASH_COMMENT_ONLY
-        self._slash_comments = suffix not in _HASH_COMMENT_ONLY
+        self._hash_comments = self._is_config or suffix not in _SLASH_COMMENT_ONLY
+        self._slash_comments = not self._is_config and suffix not in _HASH_COMMENT_ONLY
+
+    def run(self, text: str) -> str:
+        if self._is_config:
+            text = _CONFIG_LINE.sub(self._config_value, text)
+        return self.code(text)
+
+    def _config_value(self, match: "re.Match[str]") -> str:
+        """``KEY=value`` / ``key: value`` in a config file: the value is data.
+
+        Quoted values are left to the string pass; booleans, numbers and
+        empty values are kept.
+        """
+        value = match.group("value").strip()
+        if (
+            not value
+            or value[0] in "\"'`[{#|>&*"
+            or value.lower() in _CONFIG_KEEP
+            or _NUMBER.fullmatch(value)
+            or _PLACEHOLDER.fullmatch(value)
+        ):
+            return match.group(0)
+        placeholder = self._values.setdefault(value, f"<VALUE_{len(self._values) + 1}>")
+        return match.group("head") + placeholder
 
     # ------------------------------------------------------------------
     # Code: strings and comments first, then tokens in what is left
@@ -262,10 +298,14 @@ class Redactor:
            letters and digits becomes ``<VALUE_1>``..., unless it is
            clearly a function being called.
         3. The secret patterns run over the result as a second layer.
+
+        In a settings file (``.env``, ``.ini``, ``.yaml``, ``.toml``...)
+        every unquoted value after ``=`` or ``:`` is replaced as well,
+        except booleans and numbers.
         """
         if not snippet:
             return snippet
-        return cls._apply_patterns(_CodeRedaction(file_name).code(snippet))
+        return cls._apply_patterns(_CodeRedaction(file_name).run(snippet))
 
     @classmethod
     def _apply_patterns(cls, text: str) -> str:

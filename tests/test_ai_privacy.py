@@ -412,9 +412,32 @@ def test_comment_text_is_removed(code: str, file_name: str, expected: str) -> No
     assert Redactor.redact_code(code, file_name) == expected
 
 
+@pytest.mark.parametrize(
+    "file_name, code, expected",
+    [
+        (".env", f"PASSWORD={WEAK_PASSWORD}\nDEBUG=true\nPORT=8080", "PASSWORD=<VALUE_1>\nDEBUG=true\nPORT=8080"),
+        (".env.production", f"export DB_PASS={WEAK_PASSWORD}", "export DB_PASS=<VALUE_1>"),
+        ("config.yaml", f"db:\n  pass: {WEAK_PASSWORD}\n  ssl: false", "db:\n  pass: <VALUE_1>\n  ssl: false"),
+        ("app.ini", f"pw = {WEAK_PASSWORD} # prod", "pw = <VALUE_1>"),
+        ("app.properties", f'pw="{WEAK_PASSWORD}"', 'pw="<STR_1>"'),
+    ],
+    ids=["env", "env-export", "yaml", "ini", "quoted"],
+)
+def test_unquoted_values_in_settings_files_are_replaced(
+    file_name: str, code: str, expected: str
+) -> None:
+    assert Redactor.redact_code(code, file_name) == expected
+
+
+def test_assignments_in_source_files_are_not_treated_as_settings() -> None:
+    code = "password = get_password()\nlimit = max_items"
+
+    assert Redactor.redact_code(code, "views.py") == code
+
+
 def test_pattern_pass_still_runs_as_a_second_layer() -> None:
     # Outside any string, so only the pattern layer can catch the password.
-    redacted = Redactor.redact_code(f"DATABASE_URL={CONNECTION}/shop")
+    redacted = Redactor.redact_code(f"connect({CONNECTION}/shop)", "run.sh")
 
     assert "Pa55word" not in redacted
     assert REDACTED in redacted
