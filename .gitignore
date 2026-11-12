@@ -30,6 +30,8 @@ scan_history.db
 scan_history.db-shm
 scan_history.db-wal
 settings.json
+osv.db
+osv.db.new
 reports/output/
 
 # ── Secrets / local config ────────────────────────────────────────────────

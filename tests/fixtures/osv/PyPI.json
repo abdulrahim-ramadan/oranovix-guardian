@@ -1,0 +1,100 @@
+[
+  {
+    "id": "GHSA-fixt-ure1-0001",
+    "aliases": ["CVE-2019-14234", "PYSEC-2019-13"],
+    "summary": "SQL injection in Django",
+    "details": "Key and index lookups for JSONField and key lookups for HStoreField were subject to SQL injection.",
+    "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "database_specific": {"severity": "CRITICAL"},
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "Django"},
+        "ranges": [
+          {"type": "ECOSYSTEM", "events": [{"introduced": "1.11"}, {"fixed": "1.11.23"}]},
+          {"type": "ECOSYSTEM", "events": [{"introduced": "2.1"}, {"fixed": "2.1.11"}]},
+          {"type": "ECOSYSTEM", "events": [{"introduced": "2.2"}, {"fixed": "2.2.4"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "PYSEC-2019-13",
+    "aliases": ["CVE-2019-14234"],
+    "details": "An issue was discovered in Django. Key and index lookups were subject to SQL injection.",
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "django"},
+        "ranges": [
+          {"type": "GIT", "repo": "https://github.com/django/django", "events": [{"introduced": "0"}, {"fixed": "4f5b58f5cd3c57fee9972ab074f8dc6895d8f387"}]},
+          {"type": "ECOSYSTEM", "events": [{"introduced": "1.11"}, {"fixed": "1.11.23"}, {"introduced": "2.1"}, {"fixed": "2.1.11"}, {"introduced": "2.2"}, {"fixed": "2.2.4"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure1-0002",
+    "aliases": ["CVE-2024-27351"],
+    "summary": "Regular expression denial of service in Django",
+    "database_specific": {"severity": "MODERATE"},
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "django"},
+        "ranges": [
+          {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "3.2.25"}]},
+          {"type": "ECOSYSTEM", "events": [{"introduced": "4.0"}, {"fixed": "4.2.11"}]},
+          {"type": "ECOSYSTEM", "events": [{"introduced": "5.0"}, {"fixed": "5.0.3"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure1-0003",
+    "aliases": ["CVE-2099-0003"],
+    "summary": "Unsafe archive extraction in example-archive-tool",
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "Example_Archive.Tool"},
+        "ranges": [
+          {"type": "ECOSYSTEM", "events": [{"introduced": "1.0.0"}, {"last_affected": "1.4.2"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure1-0004",
+    "aliases": ["CVE-2099-0004"],
+    "summary": "Only a commit range is known",
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "git-only-package"},
+        "ranges": [
+          {"type": "GIT", "repo": "https://example.test/repo", "events": [{"introduced": "0"}, {"fixed": "0123456789abcdef0123456789abcdef01234567"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure1-0005",
+    "aliases": ["CVE-2099-0005"],
+    "summary": "Withdrawn advisory",
+    "withdrawn": "2024-01-01T00:00:00Z",
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "django"},
+        "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure1-0006",
+    "aliases": ["CVE-2099-0006"],
+    "summary": "Remote code execution in example-rce-lib",
+    "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"}],
+    "affected": [
+      {
+        "package": {"ecosystem": "PyPI", "name": "example-rce-lib"},
+        "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.0.1"}, {"introduced": "3.0.0"}, {"fixed": "3.1.0"}]}]
+      }
+    ]
+  }
+]
