@@ -30,6 +30,7 @@ Oranovix Guardian is a **professional desktop security scanner** that detects vu
 |---------|---------|
 | 🔍 **Multi-language scanning** | Python (Bandit), JavaScript/TypeScript, PHP, Java, C# |
 | 🚨 **Critical vulnerability detection** | SQL injection, eval/exec, command injection, hardcoded secrets, XSS, path traversal, weak crypto |
+| 📦 **Dependency scan** | Known vulnerabilities (CVE / GHSA) in PyPI and npm packages from the OSV database; works offline after a one-time download in Settings |
 | 📊 **Risk scoring** | 0–100 composite score; CRITICAL / HIGH / MEDIUM / LOW breakdown |
 | 📄 **PDF reports** | Professional ReportLab-generated reports with full issue table |
 | 🤖 **AI analysis** | Optional Gemini integration for natural-language remediation advice |
