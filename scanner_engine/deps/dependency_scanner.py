@@ -28,7 +28,7 @@ class DependencyScanner(BaseScanner):
     OWASP = "A06:2021 - Vulnerable and Outdated Components"
 
     def __init__(self, database: Optional[OSVDatabase] = None) -> None:
-        super().__init__(name="Dependency Scanner", supported_language=Language.UNKNOWN)
+        super().__init__(name="Dependency Scanner", supported_language=Language.CONFIG)
         self._database = database or OSVDatabase()
 
     def supports(self, file_path: str) -> bool:

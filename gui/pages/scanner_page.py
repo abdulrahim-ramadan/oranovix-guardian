@@ -40,7 +40,7 @@ from core.language_manager  import LanguageManager
 from core.sound_manager     import SoundManager
 from core.alarm_center      import AlarmCenter, AlarmLevel
 from scanner_engine.factory          import ScannerFactory
-from scanner_engine.base             import ScanResult, Severity
+from scanner_engine.base             import Language, ScanResult, Severity
 from scanner_engine.orchestrator     import ScanOrchestrator, ScanProgress
 
 
@@ -395,6 +395,8 @@ class DropZone(ctk.CTkFrame):
                 ("Java",          "*.java"),
                 ("C#",            "*.cs"),
                 ("JavaScript",    "*.js *.ts"),
+                ("Dependencies",  "requirements*.txt pyproject.toml Pipfile.lock "
+                                  "poetry.lock package.json package-lock.json"),
                 ("All files",     "*.*"),
             ],
         )
@@ -594,7 +596,9 @@ class ScannerPage(ctk.CTkFrame):
 
         # Detect language and report
         scanners = ScannerFactory.scanners_for_target(path)
-        lang_names = ", ".join(s.language.value for s in scanners) or "Unknown"
+        lang_names = self.detected_languages_text(
+            [s.language for s in scanners], ScanOrchestrator.scannable_files(path)
+        )
         engine_names = ", ".join(s.name for s in scanners) or "N/A"
         count = self._collect_scannable_files(path)
         self._log.append(
@@ -606,6 +610,14 @@ class ScannerPage(ctk.CTkFrame):
             self._log.append(f"Found {count} {lm.t('files_found')}.", "info")
         else:
             self._log.append(lm.t("no_scannable_files"), "error")
+
+    @staticmethod
+    def detected_languages_text(languages: List[Language], files: List[str]) -> str:
+        """Languages of the target for the log; config files count as "Config"."""
+        names = [language.value for language in languages]
+        if any(Language.from_path(f) is Language.CONFIG for f in files):
+            names.append(LanguageManager().t("language_config"))
+        return ", ".join(names) or Language.UNKNOWN.value
 
     def _collect_scannable_files(self, target: str) -> int:
         """Return count of scannable files under target."""

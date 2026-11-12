@@ -61,6 +61,20 @@ class FileMatcher:
         )
 
 
+# Files that hold settings or dependency lists rather than program code.
+_CONFIG_FILES = FileMatcher(
+    [
+        ".env", ".cfg", ".conf", ".config", ".ini", ".yaml", ".yml", ".json",
+        ".xml", ".toml", ".properties", ".lock", ".txt", ".tf", ".hcl",
+        ".gradle", ".pom",
+    ],
+    [
+        "Dockerfile", "docker-compose", "compose", ".htpasswd", ".npmrc",
+        ".pypirc", "Pipfile",
+    ],
+)
+
+
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
@@ -135,7 +149,18 @@ class Language(Enum):
     JAVA       = "Java"
     CSHARP     = "C#"
     HTML       = "HTML"
+    CONFIG     = "Config"
     UNKNOWN    = "Unknown"
+
+    @classmethod
+    def from_path(cls, file_path: str) -> "Language":
+        """Language of a file: by extension, and ``CONFIG`` for settings,
+        manifest and lock files (``.env``, ``Dockerfile``, ``.npmrc``...)."""
+        path = Path(file_path)
+        language = cls.from_extension(path.suffix)
+        if language is cls.UNKNOWN and _CONFIG_FILES.matches(path.name):
+            return cls.CONFIG
+        return language
 
     @classmethod
     def from_extension(cls, ext: str) -> "Language":
@@ -244,8 +269,8 @@ class Issue:
 
     @property
     def language(self) -> "Language":
-        """Programming language inferred from the file extension."""
-        return Language.from_extension(Path(self.file_path).suffix)
+        """Language of the file; ``CONFIG`` for settings and manifest files."""
+        return Language.from_path(self.file_path)
 
     @property
     def severity_label(self) -> str:
