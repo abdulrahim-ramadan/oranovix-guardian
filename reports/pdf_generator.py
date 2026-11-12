@@ -410,6 +410,7 @@ class PDFReportGenerator:
         self._add_cover(story, scan_result, styles, t)
         story.append(PageBreak())
         self._add_executive_summary(story, scan_result, styles, t)
+        self._add_vulnerable_dependencies(story, scan_result, styles, t)
         story.append(PageBreak())
         self._add_issue_details(story, scan_result, styles, t)
         self._add_footer_note(story, styles, t)
@@ -746,6 +747,78 @@ class PDFReportGenerator:
                     ]),
                 )
             )
+
+    # ------------------------------------------------------------------
+    # Vulnerable dependencies
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def dependency_rows(result: ScanResult) -> List[Tuple[str, str, str, str]]:
+        """One row per vulnerable dependency: package, version, ids, fix.
+
+        Most severe first; unpinned dependencies are not listed here.
+        """
+        findings = [
+            issue for issue in result.issues
+            if issue.dependency is not None and issue.dependency.vulnerability_ids
+        ]
+        findings.sort(key=lambda issue: (
+            -issue.severity.weight,
+            issue.dependency.package.lower() if issue.dependency else "",
+        ))
+        rows: List[Tuple[str, str, str, str]] = []
+        for issue in findings:
+            info = issue.dependency
+            if info is None:
+                continue
+            rows.append((
+                info.package, info.version, ", ".join(info.vulnerability_ids),
+                issue.recommendation,
+            ))
+        return rows
+
+    def _add_vulnerable_dependencies(
+        self, story: list, result: ScanResult, S: dict, t
+    ) -> None:
+        """Append the "Vulnerable dependencies" table; nothing when there are none."""
+        rows = self.dependency_rows(result)
+        if not rows:
+            return
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(t("pdf_vulnerable_dependencies"), S["section_header"]))
+        story.append(HRFlowable(width="100%", thickness=1, color=_Palette.MID_GRAY))
+        story.append(Spacer(1, 6))
+
+        data: list = [[
+            t("pdf_dep_package"), t("pdf_dep_version"), t("pdf_dep_ids"), t("pdf_dep_fix"),
+        ]]
+        for package, version, ids, fix in rows:
+            data.append([
+                Paragraph(escape(package), S["small"]),
+                Paragraph(escape(version), S["small"]),
+                Paragraph(escape(ids), S["small"]),
+                Paragraph(escape(fix), S["small"]),
+            ])
+        story.append(
+            Table(
+                data,
+                colWidths=[35 * mm, 22 * mm, 58 * mm, None],
+                repeatRows=1,
+                style=TableStyle([
+                    ("FONTNAME",       (0, 0), (-1, 0), FontRegistry.get_arabic_bold()),
+                    ("BACKGROUND",     (0, 0), (-1, 0), _Palette.PRIMARY),
+                    ("TEXTCOLOR",      (0, 0), (-1, 0), _Palette.WHITE),
+                    ("FONTSIZE",       (0, 0), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_Palette.WHITE, _Palette.LIGHT_GRAY]),
+                    ("VALIGN",         (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING",     (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING",  (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING",    (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING",   (0, 0), (-1, -1), 6),
+                    ("GRID",           (0, 0), (-1, -1), 0.25, _Palette.MID_GRAY),
+                ]),
+            )
+        )
 
     # ------------------------------------------------------------------
     # Detailed findings

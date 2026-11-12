@@ -215,5 +215,20 @@
   "ai_consent_allow": "Allow",
   "ai_consent_offline": "Use offline only",
   "ai_online_setting": "Allow online AI fixes (Google Gemini)",
-  "ai_online_setting_hint": "Off: only the built-in offline fixes are used. On: the vulnerable line is sent to Google Gemini after secrets are removed. Findings that are secrets are never sent."
+  "ai_online_setting_hint": "Off: only the built-in offline fixes are used. On: the vulnerable line is sent to Google Gemini after secrets are removed. Findings that are secrets are never sent.",
+  "filter_dependencies": "Dependencies",
+  "language_config": "Config",
+  "deps_db_title": "Vulnerability database (dependencies)",
+  "deps_db_update": "Update vulnerability database",
+  "deps_db_date": "Database date: {date} ({count} advisories)",
+  "deps_db_missing": "Not downloaded yet. Dependencies cannot be checked without it.",
+  "deps_db_stale": "Older than 14 days ({days} days). Please update.",
+  "deps_db_updating": "Downloading and importing. This can take a few minutes...",
+  "deps_db_failed": "Update failed: {error}",
+  "deps_db_hint": "Downloads the public OSV database (osv.dev) for PyPI and npm once. Scans then work offline. Nothing about your project is sent.",
+  "pdf_vulnerable_dependencies": "Vulnerable dependencies",
+  "pdf_dep_package": "Package",
+  "pdf_dep_version": "Version",
+  "pdf_dep_ids": "Vulnerability IDs",
+  "pdf_dep_fix": "Fix"
 }

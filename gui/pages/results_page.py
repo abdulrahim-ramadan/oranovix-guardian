@@ -50,6 +50,7 @@ from core.language_manager import LanguageManager
 from core.scan_history     import ScanHistory
 from core.alarm_center     import AlarmCenter
 from scanner_engine.base   import ScanResult, Severity, Issue
+from scanner_engine.categories import IssueCategory
 
 
 # ── Canvas-based scrollable container ────────────────────────────────────
@@ -838,6 +839,8 @@ class ResultsPage(ctk.CTkFrame):
       Score circle + Severity cards + Filter + Issues list
     """
 
+    FILTER_DEPENDENCIES = "DEPENDENCIES"
+
     def __init__(
         self,
         master,
@@ -965,9 +968,12 @@ class ResultsPage(ctk.CTkFrame):
 
         self._filter_btns: dict[str, ctk.CTkButton] = {}
         self._active_filter = "ALL"
-        for key in ("ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        for key in ("ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW", self.FILTER_DEPENDENCIES):
+            is_dependencies = key == self.FILTER_DEPENDENCIES
             btn = ctk.CTkButton(
-                filt, text=key, width=72, height=24, corner_radius=6,
+                filt,
+                text=lm.t("filter_dependencies") if is_dependencies else key,
+                width=110 if is_dependencies else 72, height=24, corner_radius=6,
                 fg_color=tm.c("accent") if key == "ALL" else tm.c("card"),
                 hover_color=tm.c("accent_h"),
                 text_color="#ffffff" if key == "ALL" else tm.c("text2"),
@@ -1078,17 +1084,21 @@ class ResultsPage(ctk.CTkFrame):
         if self._result:
             self._render_issues(self._result, level)
 
+    @classmethod
+    def filter_issues(cls, issues: List[Issue], level: str) -> List[Issue]:
+        """Issues shown for a filter button: a severity, the dependency
+        findings, or everything."""
+        if level == cls.FILTER_DEPENDENCIES:
+            return [i for i in issues if i.category is IssueCategory.DEPENDENCY]
+        if level in Severity.__members__:
+            return [i for i in issues if i.severity is Severity[level]]
+        return list(issues)
+
     def _render_issues(self, result: ScanResult, level: str) -> None:
         for w in self._issue_frame.winfo_children():
             w.destroy()
 
-        issues = result.issues
-        if level != "ALL":
-            try:
-                sev    = Severity[level]
-                issues = [i for i in issues if i.severity == sev]
-            except KeyError:
-                pass
+        issues = self.filter_issues(result.issues, level)
 
         lm = LanguageManager()
         if not issues:
