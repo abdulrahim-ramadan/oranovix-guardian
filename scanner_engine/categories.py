@@ -38,6 +38,7 @@ class IssueCategory(str, Enum):
     HOST_VALIDATION = "host_validation"
     COOKIE_SECURITY = "cookie_security"
     CORS = "cors"
+    DEPENDENCY = "dependency"
     OTHER = "other"
 
     @classmethod
@@ -128,6 +129,8 @@ RULE_CATEGORIES: dict[str, IssueCategory] = {
     "DS006": _C.TLS,
     # Django templates
     "DT001": _C.XSS, "DT002": _C.XSS,
+    # Dependencies
+    "DEP001": _C.DEPENDENCY, "DEP002": _C.DEPENDENCY,
 }
 
 

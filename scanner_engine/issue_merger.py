@@ -39,6 +39,9 @@ class IssueMerger:
     @staticmethod
     def _key(issue: Issue) -> _MergeKey:
         path = os.path.normcase(os.path.abspath(issue.file_path)) if issue.file_path else ""
+        if issue.finding_key:
+            # Several findings on one line that are not the same weakness.
+            return (path, issue.line_number, f"{issue.category.value}:{issue.finding_key}")
         if issue.category is IssueCategory.OTHER:
             return (path, issue.line_number, f"rule:{issue.rule_id}")
         return (path, issue.line_number, issue.category.value)

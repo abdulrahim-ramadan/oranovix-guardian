@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from .categories import IssueCategory
 
@@ -175,6 +175,26 @@ class Language(Enum):
 # Data models
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class DependencyInfo:
+    """What a dependency finding is about; used by the report and the filter."""
+
+    package: str
+    version: str                        # "" for an unpinned dependency
+    ecosystem: str                      # "PyPI" or "npm"
+    vulnerability_ids: Tuple[str, ...] = ()  # CVE first, then the other ids
+    fixed_version: str = ""             # lowest fixed version above the installed one
+
+    def to_dict(self) -> dict:
+        return {
+            "package": self.package,
+            "version": self.version,
+            "ecosystem": self.ecosystem,
+            "vulnerability_ids": list(self.vulnerability_ids),
+            "fixed_version": self.fixed_version,
+        }
+
+
 @dataclass
 class Issue:
     """A single security issue found in a source file.
@@ -199,6 +219,10 @@ class Issue:
     confidence: str = "MEDIUM"  # Scanner confidence level: LOW / MEDIUM / HIGH
     category: IssueCategory = IssueCategory.OTHER  # Weakness class, used to merge duplicates
     also_detected_by: List[str] = field(default_factory=list)  # Rule IDs merged into this issue
+    # Tells apart findings that share file, line and category (several
+    # vulnerabilities of one package). Empty for ordinary findings.
+    finding_key: str = ""
+    dependency: Optional[DependencyInfo] = None  # Set only by the dependency scanner
 
     # ---- Vulnerability education fields (populated by VulnerabilityDatabase)
     what_is_it: str = ""      # Plain-English explanation of the vulnerability class
@@ -266,6 +290,8 @@ class Issue:
             "confidence": self.confidence,
             "category": self.category.value,
             "also_detected_by": list(self.also_detected_by),
+            "finding_key": self.finding_key,
+            "dependency": self.dependency.to_dict() if self.dependency else None,
             "what_is_it": self.what_is_it,
             "why_dangerous": self.why_dangerous,
             "how_exploited": self.how_exploited,

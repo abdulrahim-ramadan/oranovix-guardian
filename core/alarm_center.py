@@ -248,6 +248,8 @@ class AlarmCenter:
         relative = AlarmCenter._relative_path(issue.file_path, scan_root)
         root_key = AlarmCenter._root_key(scan_root)
         raw = f"{root_key}|{issue.category.value}|{relative}|{issue.line_number}"
+        if issue.finding_key:
+            raw += f"|{issue.finding_key}"
         return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     @staticmethod
