@@ -194,13 +194,32 @@ def test_junction_outside_public_is_medium(
     assert only(monitor.check()).severity is Severity.MEDIUM
 
 
+def test_link_in_uploads_is_left_out_of_a_new_baseline(
+    root: Path, tmp_path: Path, outside: Path
+) -> None:
+    junction(outside, root / "uploads" / "etc")
+    junction(root / "docs", root / "app" / "docs")
+    baseline = Baseline(str(root), str(tmp_path / "integrity.db"), MemoryKeyStore())
+
+    result = baseline.create()
+
+    assert [s.relative_path for s in result.suspicious] == ["uploads/etc"]
+    assert "points outside the monitored folder" in result.suspicious[0].reasons[0]
+    assert "app/docs" in baseline.entries()
+    event = only(FileIntegrityMonitor(baseline, file_scanner=lambda path: []).check())
+    assert event.relative_path == "uploads/etc"
+    assert event.severity is Severity.CRITICAL
+
+
 def test_retargeted_junction_is_a_modified_link(
     root: Path, tmp_path: Path, outside: Path
 ) -> None:
-    junction(root / "docs", root / "uploads" / "docs")
     baseline = Baseline(str(root), str(tmp_path / "integrity.db"), MemoryKeyStore())
     baseline.create()
     monitor = FileIntegrityMonitor(baseline, file_scanner=lambda path: [])
+    junction(root / "docs", root / "uploads" / "docs")
+    assert only(monitor.check()).severity is Severity.HIGH
+    assert monitor.accept_all() == 1
     os.rmdir(root / "uploads" / "docs")
     junction(outside, root / "uploads" / "docs")
 

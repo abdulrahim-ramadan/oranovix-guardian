@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from core.alarm_center import AlarmCenter
 
 from .base import IntegrityEvent, Monitor, MonitorReport
-from .baseline import Baseline, BaselineError, KeyStore
+from .baseline import Baseline, BaselineError, BaselineResult, KeyStore
 from .file_integrity import FileIntegrityMonitor, FileScanner
 
 Dispatch = Callable[[Callable[[], None]], object]
@@ -206,16 +206,16 @@ class LiveDefenseController:
             self._monitor.interval = self._interval
         self._settings.save(interval=self._interval)
 
-    def create_baseline(self, ignore_patterns: Optional[Sequence[str]] = None) -> int:
+    def create_baseline(self, ignore_patterns: Optional[Sequence[str]] = None) -> BaselineResult:
         baseline = self.baseline()
         if baseline is None:
             raise BaselineError("Choose a folder first.")
         was_running = self.is_running
         self.stop(remember=False)
-        count = baseline.create(ignore_patterns)
+        result = baseline.create(ignore_patterns)
         if was_running:
             self.start()
-        return count
+        return result
 
     def start(self) -> None:
         baseline = self.baseline()

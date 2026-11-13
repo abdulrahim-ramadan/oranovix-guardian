@@ -18,9 +18,20 @@ PUBLIC_DIRS: FrozenSet[str] = frozenset({
 })
 
 
+# Public folders that hold user files, where code never belongs. Web roots
+# (static, public_html, wp-content...) legitimately hold the site's own code.
+UPLOAD_DIRS: FrozenSet[str] = frozenset({
+    "upload", "uploads", "media", "tmp", "temp", "files", "images", "img", "attachments", "downloads",
+})
+
+
 def public_part(parts: Iterable[str]) -> str:
     """The first public folder name among *parts*, or ``""``."""
     return next((p for p in parts if p.lower() in PUBLIC_DIRS), "")
+
+
+def upload_part(parts: Iterable[str]) -> str:
+    return next((p for p in parts if p.lower() in UPLOAD_DIRS), "")
 
 
 @dataclass(frozen=True)

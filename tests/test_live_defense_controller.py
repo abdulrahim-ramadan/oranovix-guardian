@@ -97,7 +97,8 @@ def test_start_stop_and_saved_state(
     controller = make(tmp_path, settings_path, keys)
     controller.set_root(str(site))
     controller.set_interval(45)
-    assert controller.create_baseline(["*.tmp"]) == 1
+    result = controller.create_baseline(["*.tmp"])
+    assert result.count == 1 and result.suspicious == ()
 
     controller.start()
     assert controller.is_running

@@ -19,7 +19,7 @@ from core.language_manager import LanguageManager
 from gui.animation_manager import AnimationManager
 from gui.theme_manager import ThemeManager
 from live_defense.base import ChangeType, IntegrityEvent
-from live_defense.baseline import BaselineError, IgnoreRules
+from live_defense.baseline import BaselineError, BaselineResult, IgnoreRules
 from live_defense.controller import LiveDefenseController, LiveDefenseState
 from scanner_engine.base import Language, ScanResult, Severity
 
@@ -32,6 +32,7 @@ class LiveDefensePage(ctk.CTkFrame):
 
     FILTERS = ("ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW")
     MAX_ROWS = 300
+    MAX_SUSPICIOUS_LISTED = 15
 
     def __init__(
         self,
@@ -376,12 +377,29 @@ class LiveDefensePage(ctk.CTkFrame):
         lm = LanguageManager()
         patterns = self._patterns_box.get("1.0", "end").splitlines()
         self._message(lm.t("ld_baseline_creating"))
-        self._background(
-            lambda: self._controller.create_baseline(patterns),
-            lambda count, error: self._after_action(
-                error, lm.t("ld_baseline_created", count=count) if not error else ""
-            ),
-        )
+        self._background(lambda: self._controller.create_baseline(patterns), self._after_baseline)
+
+    def _after_baseline(self, result: Optional[BaselineResult], error: str) -> None:
+        lm = LanguageManager()
+        if error or result is None:
+            self._after_action(error, "")
+            return
+        self._after_action("", lm.t("ld_baseline_created", count=result.count))
+        if result.suspicious:
+            warning = self.suspicious_text(result)
+            self._message(f"{lm.t('ld_baseline_created', count=result.count)}\n{warning}", error=True)
+            self._on_status(warning.splitlines()[0], "warn")
+
+    @classmethod
+    def suspicious_text(cls, result: BaselineResult) -> str:
+        lm = LanguageManager()
+        lines = [lm.t("ld_baseline_suspicious", count=len(result.suspicious))]
+        for item in result.suspicious[: cls.MAX_SUSPICIOUS_LISTED]:
+            lines.append(f"  • {item.relative_path}: {item.reasons[0]}")
+        hidden = len(result.suspicious) - cls.MAX_SUSPICIOUS_LISTED
+        if hidden > 0:
+            lines.append("  " + lm.t("ld_baseline_suspicious_more", count=hidden))
+        return "\n".join(lines)
 
     def _toggle_running(self) -> None:
         lm = LanguageManager()

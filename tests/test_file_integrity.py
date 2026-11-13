@@ -598,6 +598,84 @@ def test_edited_baseline_is_a_critical_tamper_event(
     assert [e.change for e in monitor.open_events()] == [ChangeType.TAMPERED]
 
 
+def test_clean_folder_gives_no_baseline_warning(root: Path, tmp_path: Path) -> None:
+    write(root / "static" / "admin" / "js" / "core.js", "function a() {}\n")
+    write(root / "public_html" / "index.php", "<?php echo 'hi';\n")
+    baseline = Baseline(str(root), str(tmp_path / "fresh.db"), MemoryKeyStore())
+
+    result = baseline.create()
+
+    assert result.suspicious == ()
+    assert result.count == len(baseline.entries()) == 7
+
+
+def test_shell_present_at_baseline_time_is_critical_on_the_first_check(
+    root: Path, tmp_path: Path, channel: RecordingChannel
+) -> None:
+    write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
+    baseline = Baseline(str(root), str(tmp_path / "fresh.db"), MemoryKeyStore())
+
+    result = baseline.create()
+
+    (item,) = result.suspicious
+    assert item.relative_path == "media/uploads/shell.php"
+    assert item.reasons[0].startswith("Web shell signature")
+    assert "media/uploads/shell.php" not in baseline.entries()
+    center = AlarmCenter(SqliteSeenFindingStore(str(tmp_path / "alarms.db")), [channel])
+    monitor = FileIntegrityMonitor(baseline, alarm_center=center, file_scanner=lambda path: [])
+    event = only(monitor.check())
+    assert event.change is ChangeType.NEW
+    assert event.severity is Severity.CRITICAL
+    assert len(channel.alarms) == 1
+
+
+@pytest.mark.parametrize(
+    "relative, content, reason",
+    [
+        ("uploads/avatar.php", "x\n", "Executable file in the uploads/ folder"),
+        ("docs/report.php.jpg", "x\n", "Executable extension .php hidden behind .jpg"),
+        ("static/js/app.js", marker("PHP_SYSTEM_SHELL"), "Web shell signature: PHP"),
+        ("app/helpers.py", marker("PY_REQUEST_SHELL"), "Web shell signature: Python"),
+    ],
+)
+def test_baseline_leaves_out_what_looks_planted(
+    root: Path, tmp_path: Path, relative: str, content: str, reason: str
+) -> None:
+    write(root / relative, content)
+    baseline = Baseline(str(root), str(tmp_path / "fresh.db"), MemoryKeyStore())
+
+    (item,) = baseline.create().suspicious
+
+    assert item.relative_path == relative
+    assert any(r.startswith(reason) for r in item.reasons), item.reasons
+    assert relative not in baseline.entries()
+
+
+def test_root_named_uploads_with_a_shell_at_baseline_time(tmp_path: Path) -> None:
+    folder = tmp_path / "uploads"
+    write(folder / "cat.png", "png\n")
+    write(folder / "x.phtml", "x\n")
+    baseline = Baseline(str(folder), str(tmp_path / "fresh.db"), MemoryKeyStore())
+
+    result = baseline.create()
+
+    assert [s.relative_path for s in result.suspicious] == ["x.phtml"]
+    assert sorted(baseline.entries()) == ["cat.png"]
+
+
+def test_accepting_a_left_out_file_puts_it_in_the_baseline(root: Path, tmp_path: Path) -> None:
+    write(root / "uploads" / "tool.py", "print('ok')\n")
+    baseline = Baseline(str(root), str(tmp_path / "fresh.db"), MemoryKeyStore())
+    baseline.create()
+    monitor = FileIntegrityMonitor(baseline, file_scanner=lambda path: [])
+    assert only(monitor.check()).severity is Severity.CRITICAL
+
+    assert monitor.accept_all() == 1
+
+    assert "uploads/tool.py" in baseline.entries()
+    assert monitor.check(full=True) == []
+
+
 def test_tamper_event_clears_when_a_new_baseline_is_created(
     monitor: FileIntegrityMonitor, baseline: Baseline
 ) -> None:

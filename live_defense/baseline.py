@@ -25,7 +25,10 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from core.secret_store import SecretStore
+
+from .classifier import ChangeClassifier
 from .paths import LinkInfo, is_inside, public_part, strip_extended_prefix
+from .webshell import WebShellDetector
 
 HMAC_KEY_NAME = "file_integrity_hmac_key"
 UNREADABLE = "unreadable"
@@ -62,6 +65,20 @@ class StatInfo:
 class VerifyResult:
     ok: bool
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class SuspiciousFile:
+    relative_path: str
+    reasons: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BaselineResult:
+    """What ``Baseline.create`` recorded and what it refused to record."""
+
+    count: int
+    suspicious: Tuple[SuspiciousFile, ...] = ()
 
 
 class IgnoreRules:
@@ -224,6 +241,7 @@ class Baseline:
         self._root_key = os.path.normcase(self._root)
         self._table = "files_" + hashlib.sha1(self._root_key.encode("utf-8")).hexdigest()[:16]
         self._lock = threading.Lock()
+        self._classifier = ChangeClassifier()
 
     @staticmethod
     def default_path() -> Path:
@@ -310,8 +328,13 @@ class Baseline:
     # Writing
     # ------------------------------------------------------------------
 
-    def create(self, ignore_patterns: Optional[Iterable[str]] = None) -> int:
-        """Record every file under the root as known-good. Returns the file count."""
+    def create(self, ignore_patterns: Optional[Iterable[str]] = None) -> "BaselineResult":
+        """Record the files under the root as known-good.
+
+        Files that already look planted are left out, so the first check
+        reports them as new with their real severity instead of the
+        baseline blessing a compromised folder.
+        """
         if not os.path.isdir(self._root):
             raise BaselineError(f"Folder not found: {self._root}")
         key = self._key_or_create()
@@ -319,7 +342,14 @@ class Baseline:
             ignore_patterns if ignore_patterns is not None else self.ignore_patterns()
         )
         tree = FileTree(self._root, self.rules(patterns))
-        states = {relative: tree.state(relative, info) for relative, info in tree.walk().items()}
+        states: Dict[str, FileState] = {}
+        suspicious: List[SuspiciousFile] = []
+        for relative, info in sorted(tree.walk().items()):
+            reasons = self._suspicion(tree, relative, info)
+            if reasons:
+                suspicious.append(SuspiciousFile(relative, reasons))
+            else:
+                states[relative] = tree.state(relative, info)
         with self._lock, closing(self._connect()) as conn:
             conn.execute(f"DROP TABLE IF EXISTS {self._table}")
             conn.execute(
@@ -339,7 +369,7 @@ class Baseline:
                  self._sign(key, patterns_json, self._rows(conn))),
             )
             conn.commit()
-        return len(states)
+        return BaselineResult(len(states), tuple(suspicious))
 
     def apply(self, changes: Mapping[str, Optional[FileState]]) -> None:
         """Accept changes: store each new state (``None`` removes the file) and re-sign."""
@@ -390,6 +420,14 @@ class Baseline:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _suspicion(self, tree: "FileTree", relative: str, info: StatInfo) -> Tuple[str, ...]:
+        if info.is_link:
+            return self._classifier.present_risks(
+                relative, root_name=os.path.basename(self._root), link=tree.link_info(relative)
+            )
+        hits = WebShellDetector.scan_file(tree.absolute(relative))
+        return self._classifier.present_risks(relative, hits, root_name=os.path.basename(self._root))
 
     def _require_trusted(self) -> None:
         result = self.verify()

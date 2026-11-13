@@ -277,5 +277,7 @@
   "ld_resume_text": "Monitoring of {root} was running when the app closed. Start it again?",
   "ld_resume_yes": "Resume",
   "ld_resume_no": "Not now",
-  "language_file": "File"
+  "language_file": "File",
+  "ld_baseline_suspicious": "{count} files look suspicious and were left out of the baseline:",
+  "ld_baseline_suspicious_more": "... and {count} more (see the events list)"
 }
