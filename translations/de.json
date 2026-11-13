@@ -226,7 +226,7 @@
   "ld_stopped": "Gestoppt",
   "ld_check_error": "Pr\u00fcfung fehlgeschlagen: {error}",
   "ld_ignore": "Ignoriermuster (eines pro Zeile, z. B. cache/ oder *.tmp)",
-  "ld_ignore_hint": "Immer ignoriert: Ordner {dirs}; Dateien {files}",
+  "ld_ignore_hint": "\u00dcbersprungen, au\u00dfer in einem \u00f6ffentlichen Ordner: {dirs}. Immer \u00fcbersprungen: {files}",
   "ld_save_patterns": "Muster speichern",
   "ld_patterns_saved": "Ignoriermuster gespeichert, Referenzstand neu signiert.",
   "ld_events": "Offene Ereignisse",

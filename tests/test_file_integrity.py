@@ -200,6 +200,39 @@ def test_files_in_venv_and_node_modules_are_ignored(monitor: FileIntegrityMonito
     assert monitor.check(full=True) == []
 
 
+@pytest.mark.parametrize(
+    "relative",
+    ["public/build/shell.php", "static/dist/shell.php", ".git/hooks/post-merge",
+     "shop/migrations/0002_auto.py", "build/lib/x.py", "env/Scripts/activate"],
+)
+def test_folders_the_scanner_skips_are_watched(
+    monitor: FileIntegrityMonitor, root: Path, relative: str
+) -> None:
+    write(root / relative, marker("PHP_EVAL_SHELL"))
+
+    event = only(monitor.check(full=True))
+
+    assert event.change is ChangeType.NEW
+    assert event.relative_path == relative
+
+
+def test_node_modules_outside_public_folders_is_skipped(monitor: FileIntegrityMonitor, root: Path) -> None:
+    write(root / "frontend" / "node_modules" / "pkg" / "shell.php", marker("PHP_EVAL_SHELL"))
+    write(root / ".git" / "objects" / "ab" / "cdef", "blob\n")
+    write(root / "env" / "Lib" / "site-packages" / "pkg" / "x.py", "x\n")
+
+    assert monitor.check(full=True) == []
+
+
+def test_node_modules_under_static_is_watched(monitor: FileIntegrityMonitor, root: Path) -> None:
+    write(root / "static" / "node_modules" / "pkg" / "shell.php", marker("PHP_EVAL_SHELL"))
+
+    event = only(monitor.check(full=True))
+
+    assert event.relative_path == "static/node_modules/pkg/shell.php"
+    assert event.severity is Severity.CRITICAL
+
+
 def test_user_ignore_patterns_apply(baseline: Baseline, monitor: FileIntegrityMonitor, root: Path) -> None:
     baseline.set_ignore_patterns(["cache/", "*.tmp"])
     write(root / "cache" / "page.html", "x\n")

@@ -250,7 +250,7 @@
   "ld_stopped": "Stopped",
   "ld_check_error": "Check failed: {error}",
   "ld_ignore": "Ignore patterns (one per line, e.g. cache/ or *.tmp)",
-  "ld_ignore_hint": "Always ignored: folders {dirs}; files {files}",
+  "ld_ignore_hint": "Skipped unless inside a public folder: {dirs}. Always skipped: {files}",
   "ld_save_patterns": "Save patterns",
   "ld_patterns_saved": "Ignore patterns saved and baseline re-signed.",
   "ld_events": "Open events",

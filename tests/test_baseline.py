@@ -343,3 +343,39 @@ def test_no_credential_store_means_no_baseline(project: Path, tmp_path: Path) ->
             Baseline(str(project), str(tmp_path / "integrity.db"), SecretStore(name=HMAC_KEY_NAME)).create()
     finally:
         keyring.set_keyring(previous)
+
+
+# ---------------------------------------------------------------------------
+# Own skip list
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "relative, skipped",
+    [
+        ("node_modules", True),
+        ("app/__pycache__", True),
+        ("venv", True),
+        (".venv", True),
+        ("env/Lib/site-packages", True),
+        (".git/objects", True),
+        (".git/hooks", False),
+        (".git", False),
+        ("build", False),
+        ("dist", False),
+        ("migrations", False),
+        ("env", False),
+        ("static/node_modules", False),
+        ("public/assets/venv", False),
+        ("uploads/.git/objects", False),
+        ("objects", False),
+    ],
+)
+def test_own_skip_list(relative: str, skipped: bool) -> None:
+    name = relative.rsplit("/", 1)[-1]
+
+    assert IgnoreRules().ignores_dir(name, relative) is skipped
+
+
+def test_root_named_like_a_public_folder_watches_everything() -> None:
+    assert IgnoreRules(root_name="uploads").ignores_dir("node_modules", "node_modules") is False
+    assert IgnoreRules(root_name="site").ignores_dir("node_modules", "node_modules") is True

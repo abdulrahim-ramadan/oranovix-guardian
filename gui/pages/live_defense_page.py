@@ -21,7 +21,7 @@ from gui.theme_manager import ThemeManager
 from live_defense.base import ChangeType, IntegrityEvent
 from live_defense.baseline import BaselineError, IgnoreRules
 from live_defense.controller import LiveDefenseController, LiveDefenseState
-from scanner_engine.base import EXCLUDED_DIRS, Language, ScanResult, Severity
+from scanner_engine.base import Language, ScanResult, Severity
 
 Work = Callable[[], Any]
 Done = Callable[[Any, str], None]
@@ -130,7 +130,7 @@ class LiveDefensePage(ctk.CTkFrame):
         self._patterns_box.pack(fill="x", padx=16)
         row = ctk.CTkFrame(setup, fg_color="transparent")
         row.pack(fill="x", padx=16, pady=(4, 12))
-        dirs = ", ".join(sorted(EXCLUDED_DIRS))
+        dirs = ", ".join((*IgnoreRules.SKIPPED_DIRS, *IgnoreRules.SKIPPED_PATHS))
         defaults = ", ".join(IgnoreRules.DEFAULT_FILE_PATTERNS)
         ctk.CTkLabel(row, text=lm.t("ld_ignore_hint", dirs=dirs, files=defaults),
                      anchor="w", justify="left", wraplength=520,

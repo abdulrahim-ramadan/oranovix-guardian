@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from core.secret_store import SecretStore
-from scanner_engine.base import EXCLUDED_DIRS
+from .paths import public_part
 
 HMAC_KEY_NAME = "file_integrity_hmac_key"
 UNREADABLE = "unreadable"
@@ -65,13 +65,27 @@ class VerifyResult:
 
 
 class IgnoreRules:
-    """Decides which files the baseline leaves out."""
+    """Decides which files the baseline leaves out.
+
+    Deliberately not the scanner's ``EXCLUDED_DIRS``: build output, dist,
+    migrations and ``.git/hooks`` are where planted files hide, so only
+    pure third-party or cache folders are skipped, and not even those
+    when they sit inside a public folder.
+    """
 
     DEFAULT_FILE_PATTERNS: Tuple[str, ...] = ("*.pyc", "*.log", "db.sqlite3")
+    SKIPPED_DIRS: Tuple[str, ...] = ("__pycache__", "node_modules", "venv", ".venv", "site-packages")
+    SKIPPED_PATHS: Tuple[str, ...] = (".git/objects",)
 
-    def __init__(self, user_patterns: Iterable[str] = (), extra_files: Iterable[str] = ()) -> None:
+    def __init__(
+        self,
+        user_patterns: Iterable[str] = (),
+        extra_files: Iterable[str] = (),
+        root_name: str = "",
+    ) -> None:
         self.user_patterns: Tuple[str, ...] = self.clean(user_patterns)
         self._extra = {os.path.normcase(os.path.abspath(p)) for p in extra_files}
+        self._root_name = root_name
 
     @staticmethod
     def clean(patterns: Iterable[str]) -> Tuple[str, ...]:
@@ -84,7 +98,7 @@ class IgnoreRules:
         return tuple(seen)
 
     def ignores_dir(self, name: str, relative: str) -> bool:
-        if name.lower() in EXCLUDED_DIRS:
+        if self._skipped_by_default(relative):
             return True
         return any(
             self._match(name, relative, pattern.rstrip("/"))
@@ -97,6 +111,15 @@ class IgnoreRules:
             return True
         patterns = (*self.DEFAULT_FILE_PATTERNS, *(p for p in self.user_patterns if not p.endswith("/")))
         return any(self._match(name, relative, pattern) for pattern in patterns)
+
+    def _skipped_by_default(self, relative: str) -> bool:
+        parts = PurePosixPath(relative).parts
+        if not parts:
+            return False
+        lowered = [p.lower() for p in parts]
+        if lowered[-1] not in self.SKIPPED_DIRS and "/".join(lowered[-2:]) not in self.SKIPPED_PATHS:
+            return False
+        return not public_part((self._root_name, *parts[:-1]))
 
     @staticmethod
     def _match(name: str, relative: str, pattern: str) -> bool:
@@ -227,6 +250,7 @@ class Baseline:
         return IgnoreRules(
             self.ignore_patterns() if patterns is None else patterns,
             extra_files=(own, own + "-journal", own + "-wal", own + "-shm"),
+            root_name=os.path.basename(self._root),
         )
 
     def tree(self) -> FileTree:
