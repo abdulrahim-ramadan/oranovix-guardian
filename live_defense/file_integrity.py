@@ -254,6 +254,9 @@ class FileIntegrityMonitor(Monitor):
             hits = WebShellDetector.scan_file(path)
             findings = self._scan_file(path)
         severity, reasons = self._classifier.classify(change, relative, hits, findings)
+        if new == UNREADABLE:
+            # Often an antivirus that locked or removed the file: worth knowing.
+            reasons = (*reasons, "Content could not be read (locked, or removed by an antivirus?)")
         return IntegrityEvent(
             change=change, severity=severity, root=self.root, relative_path=relative,
             reasons=reasons, old_sha256=old, new_sha256=new,

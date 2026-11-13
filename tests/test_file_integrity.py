@@ -1,7 +1,10 @@
 """File integrity monitor: detection, severity, timestomping, tampering, alarms.
 
 No sleeps and no GUI: every test calls ``check()`` directly. Shell-shaped
-test content is assembled at runtime.
+test content is assembled at runtime and never written to disk: an
+antivirus would lock or quarantine such a file. Files on disk hold a
+marker; the detector's file reader puts the real payload back in memory,
+so the real signature rules still run on the real text.
 """
 from __future__ import annotations
 
@@ -27,6 +30,32 @@ PY_EXEC_SHELL = "import base64\n" + "ex" + "ec(base64." + "b64decode(payload))\n
 PY_REQUEST_SHELL = "import os\ndef run(request):\n    os." + "popen(request." + "GET['cmd'])\n"
 JSP_SHELL = "<% Runtime." + "getRuntime()." + "exec(request." + "getParameter(\"c\")); %>\n"
 LONG_BASE64 = "blob = '" + ("QUJD" * 600) + "'\n"
+
+PAYLOADS = {
+    "PHP_EVAL_SHELL": PHP_EVAL_SHELL,
+    "PHP_SYSTEM_SHELL": PHP_SYSTEM_SHELL,
+    "PY_EXEC_SHELL": PY_EXEC_SHELL,
+    "PY_REQUEST_SHELL": PY_REQUEST_SHELL,
+}
+
+
+def marker(name: str) -> str:
+    """What goes on disk instead of a shell payload."""
+    return f"@@{name}@@"
+
+
+@pytest.fixture(autouse=True)
+def payloads_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    def scan_file(path: str) -> list:
+        try:
+            text = Path(path).read_bytes().decode("latin-1")
+        except OSError:
+            return []
+        for name, payload in PAYLOADS.items():
+            text = text.replace(marker(name), payload)
+        return WebShellDetector.scan_text(text)
+
+    monkeypatch.setattr(WebShellDetector, "scan_file", staticmethod(scan_file))
 
 
 class MemoryKeyStore:
@@ -148,8 +177,22 @@ def test_touch_without_content_change_is_not_an_event(monitor: FileIntegrityMoni
     assert monitor.check() == []
 
 
+def test_unreadable_new_file_is_still_reported(
+    monitor: FileIntegrityMonitor, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from live_defense.baseline import UNREADABLE, FileTree
+
+    monkeypatch.setattr(FileTree, "hash", lambda self, relative, is_link=False: UNREADABLE)
+    write(root / "media" / "uploads" / "locked.php", "x\n")
+
+    event = only(monitor.check())
+
+    assert event.severity is Severity.CRITICAL
+    assert event.reasons[-1] == "Content could not be read (locked, or removed by an antivirus?)"
+
+
 def test_files_in_venv_and_node_modules_are_ignored(monitor: FileIntegrityMonitor, root: Path) -> None:
-    write(root / "venv" / "Lib" / "evil.py", PY_EXEC_SHELL)
+    write(root / "venv" / "Lib" / "evil.py", marker("PY_EXEC_SHELL"))
     write(root / "node_modules" / "pkg" / "index.js", "x\n")
     write(root / "shop" / "__pycache__" / "views.cpython-313.pyc", "x\n")
     write(root / "server.log", "x\n")
@@ -170,7 +213,7 @@ def test_user_ignore_patterns_apply(baseline: Baseline, monitor: FileIntegrityMo
 # ---------------------------------------------------------------------------
 
 def test_eval_shell_in_uploads_is_critical(monitor: FileIntegrityMonitor, root: Path) -> None:
-    write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
 
     event = only(monitor.check())
 
@@ -293,7 +336,7 @@ def test_signature_reports_its_line() -> None:
 
 
 def test_signature_in_a_modified_file_is_critical(monitor: FileIntegrityMonitor, root: Path) -> None:
-    modify(root / "shop" / "views.py", PY_REQUEST_SHELL)
+    modify(root / "shop" / "views.py", marker("PY_REQUEST_SHELL"))
 
     event = only(monitor.check())
 
@@ -370,7 +413,7 @@ def tamper(baseline: Baseline, sql: str) -> None:
 def test_edited_baseline_is_a_critical_tamper_event(
     monitor: FileIntegrityMonitor, baseline: Baseline, root: Path, channel: RecordingChannel
 ) -> None:
-    write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
     tamper(baseline, "INSERT INTO {table} VALUES ('media/uploads/shell.php', 'x', 1, 1)")
 
     event = only(monitor.check())
@@ -406,7 +449,7 @@ def test_tamper_event_clears_when_a_new_baseline_is_created(
 def test_same_unchanged_state_alarms_once(
     monitor: FileIntegrityMonitor, root: Path, channel: RecordingChannel
 ) -> None:
-    write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
 
     assert len(monitor.check()) == 1
     assert len(channel.alarms) == 1
@@ -421,10 +464,10 @@ def test_same_unchanged_state_alarms_once(
 def test_a_second_change_to_the_same_file_alarms_again(
     monitor: FileIntegrityMonitor, root: Path, channel: RecordingChannel
 ) -> None:
-    shell = write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    shell = write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
     monitor.check()
 
-    modify(shell, PHP_SYSTEM_SHELL)
+    modify(shell, marker("PHP_SYSTEM_SHELL"))
     event = only(monitor.check())
 
     assert event.change is ChangeType.NEW
@@ -435,7 +478,7 @@ def test_a_second_change_to_the_same_file_alarms_again(
 def test_a_fresh_monitor_does_not_repeat_old_alarms(
     baseline: Baseline, root: Path, tmp_path: Path, channel: RecordingChannel
 ) -> None:
-    write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
     store = SqliteSeenFindingStore(str(tmp_path / "alarms.db"))
     first = FileIntegrityMonitor(baseline, alarm_center=AlarmCenter(store, [channel]), file_scanner=lambda p: [])
     first.check()
@@ -457,7 +500,7 @@ def test_low_and_medium_events_are_listed_but_silent(
 
 
 def test_deleted_shell_stays_listed_as_evidence(monitor: FileIntegrityMonitor, root: Path) -> None:
-    shell = write(root / "media" / "uploads" / "shell.php", PHP_EVAL_SHELL)
+    shell = write(root / "media" / "uploads" / "shell.php", marker("PHP_EVAL_SHELL"))
     monitor.check()
 
     shell.unlink()
