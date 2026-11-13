@@ -198,6 +198,61 @@ class FileIntegrityMonitor(Monitor):
             return events
 
     # ------------------------------------------------------------------
+    # Accepting changes
+    # ------------------------------------------------------------------
+
+    def accept(self, event_ids: Sequence[str]) -> int:
+        """Take the current state of the events' files into the baseline.
+
+        Every open event of those files is closed, so a later change shows
+        up as a new event with a new alarm. Returns the number of files.
+        Raises ``BaselineError`` when the baseline is not trusted.
+        """
+        with self._lock:
+            paths = {
+                event.relative_path
+                for event in self._open.values()
+                if event.event_id in set(event_ids) and event.can_accept
+            }
+            return self._accept_paths(paths)
+
+    def accept_all(self) -> int:
+        with self._lock:
+            return self._accept_paths(
+                {event.relative_path for event in self._open.values() if event.can_accept}
+            )
+
+    def set_ignore_patterns(self, patterns: Sequence[str]) -> Tuple[str, ...]:
+        """Change the ignore patterns; events of files now ignored are closed."""
+        with self._lock:
+            cleaned = self._baseline.set_ignore_patterns(patterns)
+            visible = set(self._baseline.tree().walk()) | set(self._baseline.entries())
+            for event_id, event in list(self._open.items()):
+                if event.can_accept and event.relative_path not in visible:
+                    del self._open[event_id]
+            return cleaned
+
+    def _accept_paths(self, paths: set) -> int:
+        if not paths:
+            return 0
+        tree = self._baseline.tree()
+        present = tree.walk()
+        changes: Dict[str, Optional[FileState]] = {}
+        for relative in paths:
+            info = present.get(relative)
+            changes[relative] = None if info is None else tree.state(relative, info)
+        self._baseline.apply(changes)
+        for relative, state in changes.items():
+            if state is None:
+                self._observed.pop(relative, None)
+            else:
+                self._observed[relative] = state
+        for event_id, event in list(self._open.items()):
+            if event.relative_path in paths and event.can_accept:
+                del self._open[event_id]
+        return len(paths)
+
+    # ------------------------------------------------------------------
     # Comparison
     # ------------------------------------------------------------------
 
