@@ -32,6 +32,8 @@ scan_history.db-wal
 settings.json
 osv.db
 osv.db.new
+integrity.db
+integrity.db-journal
 reports/output/
 
 # ── Secrets / local config ────────────────────────────────────────────────
