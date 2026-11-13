@@ -189,5 +189,20 @@
   "ai_consent_allow": "Erlauben",
   "ai_consent_offline": "Nur offline verwenden",
   "ai_online_setting": "Online-KI-Korrekturen erlauben (Google Gemini)",
-  "ai_online_setting_hint": "Aus: Es werden nur die eingebauten Offline-Korrekturen verwendet. Ein: Die verwundbare Zeile wird an Google Gemini gesendet, nachdem Geheimnisse entfernt wurden. Funde, die selbst Geheimnisse sind, werden nie gesendet."
+  "ai_online_setting_hint": "Aus: Es werden nur die eingebauten Offline-Korrekturen verwendet. Ein: Die verwundbare Zeile wird an Google Gemini gesendet, nachdem Geheimnisse entfernt wurden. Funde, die selbst Geheimnisse sind, werden nie gesendet.",
+  "filter_dependencies": "Abh\u00e4ngigkeiten",
+  "language_config": "Konfiguration",
+  "deps_db_title": "Schwachstellen-Datenbank (Abh\u00e4ngigkeiten)",
+  "deps_db_update": "Schwachstellen-Datenbank aktualisieren",
+  "deps_db_date": "Stand der Datenbank: {date} ({count} Meldungen)",
+  "deps_db_missing": "Noch nicht heruntergeladen. Ohne sie k\u00f6nnen Abh\u00e4ngigkeiten nicht gepr\u00fcft werden.",
+  "deps_db_stale": "\u00c4lter als 14 Tage ({days} Tage). Bitte aktualisieren.",
+  "deps_db_updating": "Wird heruntergeladen und importiert. Das kann einige Minuten dauern...",
+  "deps_db_failed": "Aktualisierung fehlgeschlagen: {error}",
+  "deps_db_hint": "L\u00e4dt einmalig die \u00f6ffentliche OSV-Datenbank (osv.dev) f\u00fcr PyPI und npm herunter. Scans funktionieren danach offline. Es werden keine Daten \u00fcber Ihr Projekt gesendet.",
+  "pdf_vulnerable_dependencies": "Verwundbare Abh\u00e4ngigkeiten",
+  "pdf_dep_package": "Paket",
+  "pdf_dep_version": "Version",
+  "pdf_dep_ids": "Schwachstellen-IDs",
+  "pdf_dep_fix": "Behebung"
 }

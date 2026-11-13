@@ -24,9 +24,10 @@ Version: 1.1.0
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import List, Literal
 
 import os
+import threading
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -35,6 +36,7 @@ from gui.theme_manager        import ThemeManager
 from core.language_manager    import LanguageManager
 from core.secret_store        import SecretStore, SecretStoreError
 from core.sound_manager       import SoundManager
+from scanner_engine.deps.osv_db import OSVDatabase, OSVUpdateError
 from scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
 from scanner_engine.rule_engine import RuleEngine, Rule, RuleLanguage
 
@@ -106,6 +108,7 @@ class SettingsPage(ctk.CTkFrame):
         # Obtain the singleton SoundManager to read and update sound settings
         self._sm       = SoundManager()
         self._secrets  = SecretStore()
+        self._deps_db  = OSVDatabase()
         self._build()
 
     def _build(self) -> None:
@@ -339,6 +342,36 @@ class SettingsPage(ctk.CTkFrame):
             fg_color="transparent", anchor="w", justify="left", wraplength=520,
         ).pack(anchor="w", pady=(2, 0))
 
+        # ── Vulnerability database (dependency scan) ──────────────────
+        deps_sec = _Section(scroll, f"\U0001f4e6  {lm.t('deps_db_title')}")
+        deps_sec.pack(fill="x", pady=(0, 12))
+
+        deps_body = ctk.CTkFrame(deps_sec, fg_color="transparent")
+        deps_body.pack(fill="x", padx=16, pady=10)
+        deps_row = ctk.CTkFrame(deps_body, fg_color="transparent")
+        deps_row.pack(fill="x")
+        self._deps_update_btn = ctk.CTkButton(
+            deps_row, text=lm.t("deps_db_update"),
+            width=230, height=28, corner_radius=6,
+            fg_color=tm.c("accent"), hover_color=tm.c("accent_h"),
+            text_color="#ffffff", font=ctk.CTkFont(size=10),
+            command=self._update_deps_db,
+        )
+        self._deps_update_btn.pack(side="left")
+        # Shows the date of the local database, or why an update failed
+        self._deps_status_lbl = ctk.CTkLabel(
+            deps_row, text="",
+            font=ctk.CTkFont(size=10), text_color=tm.c("text2"),
+            fg_color="transparent", anchor="w", justify="left", wraplength=360,
+        )
+        self._deps_status_lbl.pack(side="left", padx=(12, 0))
+        ctk.CTkLabel(
+            deps_body, text=lm.t("deps_db_hint"),
+            font=ctk.CTkFont(size=9), text_color=tm.c("text3"),
+            fg_color="transparent", anchor="w", justify="left", wraplength=520,
+        ).pack(anchor="w", pady=(6, 0))
+        self._refresh_deps_status()
+
         # ── Rules Manager ─────────────────────────────────────────────
         rules_sec = _Section(scroll, f"\U0001f4cb  {lm.t('rules_manager')}")
         rules_sec.pack(fill="x", pady=(0, 12))
@@ -423,6 +456,66 @@ class SettingsPage(ctk.CTkFrame):
 
         self._api_save_btn.configure(state="normal" if available else "disabled")
         self._api_remove_btn.configure(state="normal" if stored else "disabled")
+
+    # ------------------------------------------------------------------
+    # Vulnerability database handlers
+    # ------------------------------------------------------------------
+
+    def _refresh_deps_status(self, message: str = "", error: bool = False) -> None:
+        """Show the date of the local vulnerability database, or *message*."""
+        tm = ThemeManager()
+        lm = LanguageManager()
+        updated = self._deps_db.updated_at()
+
+        if message:
+            text, color = message, tm.c("error") if error else tm.c("text2")
+        elif updated is None:
+            text, color = lm.t("deps_db_missing"), tm.c("warning")
+        else:
+            text = lm.t(
+                "deps_db_date",
+                date=updated.strftime("%Y-%m-%d %H:%M"),
+                count=self._deps_db.advisory_count(),
+            )
+            color = tm.c("success")
+            if self._deps_db.is_stale():
+                text += "\n" + lm.t("deps_db_stale", days=self._deps_db.age_days())
+                color = tm.c("warning")
+        self._deps_status_lbl.configure(text=text, text_color=color)
+
+    def _update_deps_db(self) -> None:
+        """Download the OSV exports in a background thread and rebuild the database."""
+        lm = LanguageManager()
+        self._deps_update_btn.configure(state="disabled")
+        self._refresh_deps_status(lm.t("deps_db_updating"))
+
+        # The worker only stores its outcome; the UI thread picks it up, so
+        # no widget is touched from the background thread.
+        outcome: List[str] = []
+
+        def worker() -> None:
+            try:
+                self._deps_db.update()
+                outcome.append("")
+            except OSVUpdateError as exc:
+                outcome.append(str(exc))
+            except Exception as exc:
+                outcome.append(type(exc).__name__)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, self._poll_deps_update, outcome)
+
+    def _poll_deps_update(self, outcome: List[str]) -> None:
+        if not outcome:
+            self.after(200, self._poll_deps_update, outcome)
+            return
+        lm = LanguageManager()
+        error = outcome[0]
+        self._deps_update_btn.configure(state="normal")
+        if error:
+            self._refresh_deps_status(lm.t("deps_db_failed", error=error), error=True)
+        else:
+            self._refresh_deps_status()
 
     def _toggle_ai_online(self) -> None:
         """Save whether AI fix requests may be sent to Google Gemini."""

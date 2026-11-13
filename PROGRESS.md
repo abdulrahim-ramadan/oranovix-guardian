@@ -1,5 +1,43 @@
 # Oranovix Guardian — Development Progress
 
+## Dependency scan (branch `feature/dependency-scan`)
+
+Goal: report known vulnerabilities (CVE / GHSA) in the packages a project depends on. Works offline after a one-time database download.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `OSVDatabase`: local SQLite copy of the OSV advisories (osv.dev) for PyPI and npm. `update()` downloads the two `all.zip` exports and rebuilds the file; it is the only code that uses the network. The new database is built beside the old one and swapped in when complete, so a failed download or a broken archive leaves the old one untouched. Stored per advisory: id, aliases (CVE), summary; per affected package: ecosystem, normalised name, severity, ranges with their events. GIT ranges and withdrawn advisories are not imported. Severity: CVSS v3 base score (computed from the vector), else the advisory's severity label, else MEDIUM. `status_warning()` reports a missing database or one older than 14 days. | `scanner_engine/deps/osv_db.py`, `scanner_engine/deps/severity.py` |
+| 2 | Manifest parsers, one class each behind the ABC `ManifestParser`: `requirements*.txt`, `pyproject.toml` (PEP 621, PEP 735, Poetry tables), `Pipfile.lock`, `poetry.lock`, `package.json`, `package-lock.json` (lockfile versions 1 to 3). Every dependency carries its manifest line. `ManifestFinder` prefers lock files: `package.json` is skipped beside `package-lock.json`, `pyproject.toml` beside `poetry.lock`. Third-party folders (`node_modules`, `venv`...) are not searched. Entries installed from a URL, git or a local path are skipped. | `scanner_engine/deps/manifests.py` |
+| 3 | Version matching with the OSV rule: events in version order, `introduced` switches "affected" on, `fixed` and `limit` switch it off from that version, `last_affected` after that version. PyPI versions use `packaging.version`; npm versions use the small `SemVer` class (pre-releases ordered as the semver spec says, build metadata ignored). A version that cannot be parsed is never reported. | `scanner_engine/deps/matcher.py`, `scanner_engine/deps/versions.py` |
+| 4 | `DependencyScanner`. DEP001: one finding per package and vulnerability, on the manifest line, title like `Django 2.2.0: CVE-2019-14234 (SQL injection)`, fix text `Upgrade to X.Y.Z or later` with the lowest fixed version above the installed one. Records that share an id (the GHSA and the PYSEC entry of one CVE) are one finding that lists all ids. DEP002: an entry without an exact version gives one LOW finding "Unpinned dependency"; no version is guessed. Category `DEPENDENCY`. Package names are normalised (PEP 503 for PyPI). | `scanner_engine/deps/dependency_scanner.py`, `scanner_engine/categories.py` |
+| 5 | Integration. `ScanOrchestrator` runs the stage only when a manifest exists; manifests count in `files_scanned`. `Issue.finding_key` keeps several vulnerabilities on one manifest line apart in `IssueMerger` and gives each its own alarm id, so a CRITICAL dependency goes through `AlarmCenter` like any other finding. A missing or old database and an unreadable manifest become engine warnings; the scan still completes. | `scanner_engine/orchestrator.py`, `scanner_engine/base.py`, `scanner_engine/issue_merger.py`, `core/alarm_center.py` |
+| 6 | UI. Settings: "Update vulnerability database" button (runs in the background) and the database date; a warning when it is missing or older than 14 days. Results page: filter "Dependencies". PDF: section "Vulnerable dependencies" with package, version, ids and fix. Texts in AR/DE/EN. | `gui/pages/settings_page.py`, `gui/pages/results_page.py`, `reports/pdf_generator.py`, `translations/` |
+| 7 | Config files (`.env`, `Dockerfile`, `.npmrc`, manifests, lock files, `.yaml`, `.json`...) are shown as language "Config" instead of "Unknown" in the toast and in the scan log. | `scanner_engine/base.py`, `core/alarm_center.py`, `gui/pages/scanner_page.py` |
+
+Tests: 408 passing (226 before + 182 new). They use a tiny OSV fixture in `tests/fixtures/osv/`; no test reaches the network, and the dependency scan tests fail on any attempt to open a connection. Type check: `uvx pyright`, 0 errors.
+
+Checked once by hand against the real OSV exports (not part of the test suite): download and import took about 54 seconds, 236,769 advisories, database file 63 MB; a scan of a small project took 0.2 seconds.
+
+### Known limits
+
+- Only PyPI and npm. `Pipfile` (without `.lock`), `yarn.lock`, `pnpm-lock.yaml` and `uv.lock` are not read.
+- Only versions that are written in a manifest are checked. Packages that are installed but listed nowhere, and transitive packages without a lock file, are not seen.
+- A package with many known vulnerabilities gives many findings (the real data lists 43 for Django 2.2.0), and the risk score then reaches 100 quickly.
+- The suggested fix is the lowest fixed version above the installed one, which can be on a newer release line when the installed line got no fix.
+- Advisories that list only single versions without a range, or only a GIT commit range, are not matched.
+- CVSS v4 vectors are not scored; such advisories fall back to their severity label or MEDIUM.
+- Advisory summaries are English only.
+- The database file (`osv.db`) is written next to `settings.json`. The update replaces the whole file; there is no incremental update and no automatic update.
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet. The branch is not merged.
+- New dependency in `src/requirements.txt`: `packaging`. `tomllib` and `sqlite3` are part of Python (3.11 or newer is needed for `tomllib`).
+- No new PyInstaller options are expected: the new modules are plain imports. Not checked in a built exe.
+- `osv.db` is not shipped. The user downloads it once from Settings.
+
+---
+
 ## Type check, API key storage and AI privacy (branch `chore/types-and-api-key`)
 
 Goal: a clean type check, a Gemini API key that is really saved without ever being written to a plain-text file, and no secret or unneeded code leaving the machine for the online AI.

@@ -32,7 +32,7 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tup
 from core.language_manager import LanguageManager
 from core.scan_history import ScanHistory
 from core.sound_manager import SoundManager
-from scanner_engine.base import Issue, Severity
+from scanner_engine.base import Issue, Language, Severity
 
 
 class AlarmLevel(Enum):
@@ -235,6 +235,13 @@ class AlarmCenter:
         return LanguageManager().t("critical_open_banner", count=count)
 
     @staticmethod
+    def language_label(issue: Issue) -> str:
+        """Name shown for the issue's file type; config files are "Config"."""
+        if issue.language is Language.CONFIG:
+            return LanguageManager().t("language_config")
+        return issue.language.value
+
+    @staticmethod
     def _root_key(scan_root: str) -> str:
         return os.path.normcase(os.path.abspath(scan_root)) if scan_root else ""
 
@@ -248,6 +255,8 @@ class AlarmCenter:
         relative = AlarmCenter._relative_path(issue.file_path, scan_root)
         root_key = AlarmCenter._root_key(scan_root)
         raw = f"{root_key}|{issue.category.value}|{relative}|{issue.line_number}"
+        if issue.finding_key:
+            raw += f"|{issue.finding_key}"
         return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     @staticmethod
@@ -267,7 +276,7 @@ class AlarmCenter:
         )
         is_critical = worst.severity is Severity.CRITICAL and not worst.needs_review
         level = AlarmLevel.CRITICAL if is_critical else AlarmLevel.HIGH
-        counts = dict(Counter(issue.language.value for issue in new_issues))
+        counts = dict(Counter(AlarmCenter.language_label(issue) for issue in new_issues))
         counts_text = ", ".join(f"{name} {count}" for name, count in counts.items())
 
         if is_critical:
@@ -278,7 +287,7 @@ class AlarmCenter:
             title = lm.t("alarm_high_title")
         location = lm.t(
             "alarm_location",
-            language=worst.language.value,
+            language=AlarmCenter.language_label(worst),
             file=worst.filename,
             line=worst.line_number,
             issue=lm.rule_title((worst.rule_id, *worst.also_detected_by), worst.title),

@@ -16,6 +16,7 @@ from .taint import TaintTracker
 from .django_rules import DjangoAnalyzer, DjangoRule
 from .django_settings_rules import DjangoSettingsAnalyzer, DjangoSettingsRule
 from .django_template_rules import DjangoTemplateScanner, DjangoTemplateRule
+from .deps import DependencyScanner, OSVDatabase
 
 __all__ = [
     "Severity", "Issue", "ScanResult", "BaseScanner", "Language",
@@ -30,4 +31,5 @@ __all__ = [
     "TaintTracker", "DjangoAnalyzer", "DjangoRule",
     "DjangoSettingsAnalyzer", "DjangoSettingsRule",
     "DjangoTemplateScanner", "DjangoTemplateRule",
+    "DependencyScanner", "OSVDatabase",
 ]

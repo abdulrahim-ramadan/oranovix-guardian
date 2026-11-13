@@ -3,7 +3,8 @@ Runs every scan engine against one target and merges the output.
 
 ``ScanOrchestrator`` is the single entry point for a full scan: one
 scanner per language found in the target, then the Django template
-scanner, the secrets detector and the rule engine.  The GUI only calls ``scan`` and renders progress.
+scanner, the secrets detector, the rule engine and the dependency
+scanner.  The GUI only calls ``scan`` and renders progress.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from .base import BaseScanner, Language, ScanResult, ScanStatus
+from .deps.dependency_scanner import DependencyScanner
 from .django_template_rules import DjangoTemplateScanner
 from .factory import ScannerFactory
 from .issue_merger import IssueMerger
@@ -29,6 +31,7 @@ class ScanStage(Enum):
     TEMPLATES = "templates"
     SECRETS = "secrets"
     RULES = "rules"
+    DEPENDENCIES = "dependencies"
     FINISHED = "finished"
 
 
@@ -54,9 +57,11 @@ class ScanOrchestrator:
         rule_engine: Optional[RuleEngine] = None,
         on_progress: Optional[ProgressListener] = None,
         template_scanner: Optional[BaseScanner] = None,
+        dependency_scanner: Optional[BaseScanner] = None,
     ) -> None:
         self._secrets_detector = secrets_detector or SecretsDetector()
         self._template_scanner = template_scanner or DjangoTemplateScanner()
+        self._dependency_scanner = dependency_scanner or DependencyScanner()
         self._rule_engine = rule_engine
         self._on_progress = on_progress
         self._merger = IssueMerger()
@@ -75,6 +80,7 @@ class ScanOrchestrator:
         self._run_template_scanner(target, result)
         self._run_secrets_detector(target, result)
         self._run_rule_engine(target, result)
+        self._run_dependency_scanner(target, result)
 
         result.issues = self._merger.merge(result.issues)
         result.files_scanned = len(self.scannable_files(target))
@@ -85,8 +91,9 @@ class ScanOrchestrator:
 
     @staticmethod
     def scannable_files(target: str) -> List[str]:
-        """Every file any engine would look at: source files plus secret-bearing config."""
-        return BaseScanner.collect_files(
+        """Every file any engine would look at: source files, secret-bearing
+        config and dependency manifests."""
+        files = BaseScanner.collect_files(
             target,
             [
                 *ScannerFactory.all_supported_extensions(),
@@ -95,6 +102,7 @@ class ScanOrchestrator:
             ],
             SecretsDetector.SUPPORTED_FILE_NAMES,
         )
+        return sorted({*files, *DependencyScanner.manifest_files(target)})
 
     # ------------------------------------------------------------------
     # Stages
@@ -145,6 +153,20 @@ class ScanOrchestrator:
         for file_path in BaseScanner.collect_files(target, extensions):
             language = Language.from_extension(Path(file_path).suffix)
             result.issues.extend(engine.scan_file(file_path, language))
+
+    def _run_dependency_scanner(self, target: str, result: ScanResult) -> None:
+        scanner = self._dependency_scanner
+        manifests = DependencyScanner.manifest_files(target)
+        if not manifests:
+            return
+        self._report(
+            ScanStage.DEPENDENCIES,
+            f"Engine: {scanner.name} ({len(manifests)} manifest file(s))",
+            0.92,
+        )
+        partial = scanner.scan(target)
+        result.issues.extend(partial.issues)
+        self._collect_warnings(scanner.name, partial, result, ScanStage.DEPENDENCIES, 0.92)
 
     # ------------------------------------------------------------------
     # Helpers

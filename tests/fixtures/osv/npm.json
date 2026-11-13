@@ -1,0 +1,30 @@
+[
+  {
+    "id": "GHSA-fixt-ure2-0001",
+    "aliases": ["CVE-2020-8203"],
+    "summary": "Prototype pollution in lodash",
+    "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:H"}],
+    "database_specific": {"severity": "HIGH"},
+    "affected": [
+      {
+        "package": {"ecosystem": "npm", "name": "lodash"},
+        "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "4.17.19"}]}]
+      }
+    ]
+  },
+  {
+    "id": "GHSA-fixt-ure2-0002",
+    "aliases": ["CVE-2099-1002"],
+    "summary": "Denial of service in @example/scoped-pkg",
+    "affected": [
+      {
+        "package": {"ecosystem": "npm", "name": "@example/scoped-pkg"},
+        "ranges": [{"type": "SEMVER", "events": [{"introduced": "2.0.0-beta.1"}, {"fixed": "2.0.0"}]}]
+      },
+      {
+        "package": {"ecosystem": "PyPI", "name": "not-an-npm-package"},
+        "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+      }
+    ]
+  }
+]
