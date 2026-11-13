@@ -317,6 +317,71 @@ def test_classifier(change: ChangeType, relative: str, severity: Severity) -> No
     assert ChangeClassifier().classify(change, relative)[0] is severity
 
 
+ALL_EXECUTABLE = sorted(ChangeClassifier.EXECUTABLE)
+
+
+def test_executable_list_has_the_server_side_types() -> None:
+    expected = {
+        ".php", ".php3", ".php4", ".php5", ".php7", ".php8", ".phtml", ".pht", ".phps", ".phar",
+        ".inc", ".asp", ".aspx", ".ashx", ".asmx", ".cshtml", ".jsp", ".jspx", ".jspf", ".cfm",
+        ".cgi", ".pl", ".py", ".js", ".sh", ".bat", ".ps1", ".exe", ".dll",
+    }
+    assert expected <= ChangeClassifier.EXECUTABLE
+
+
+@pytest.mark.parametrize("ext", ALL_EXECUTABLE)
+@pytest.mark.parametrize(
+    "template",
+    ["uploads/x{ext}", "uploads/X{EXT}", "uploads/x{ext}.", "uploads/x{ext}. .", "uploads/x{ext} "],
+    ids=["plain", "upper", "trailing-dot", "dots-and-spaces", "trailing-space"],
+)
+def test_every_executable_in_a_public_folder_is_critical(ext: str, template: str) -> None:
+    relative = template.format(ext=ext, EXT=ext.upper())
+
+    severity, reasons = ChangeClassifier().classify(ChangeType.NEW, relative)
+
+    assert severity is Severity.CRITICAL, reasons
+    assert "New executable file in the uploads/ folder" in reasons
+
+
+@pytest.mark.parametrize("ext", ALL_EXECUTABLE)
+@pytest.mark.parametrize(
+    "template", ["docs/x{ext}.jpg", "docs/X{EXT}.PNG", "docs/x{ext}.pdf.", "docs/x{ext}.txt "],
+)
+def test_every_executable_behind_a_harmless_extension_is_critical(ext: str, template: str) -> None:
+    relative = template.format(ext=ext, EXT=ext.upper())
+
+    severity, reasons = ChangeClassifier().classify(ChangeType.NEW, relative)
+
+    assert severity is Severity.CRITICAL
+    assert reasons[0].startswith(f"Executable extension {ext} hidden behind ")
+
+
+def test_trailing_dot_is_named_in_the_reasons() -> None:
+    _, reasons = ChangeClassifier().classify(ChangeType.NEW, "uploads/shell.php.")
+
+    assert "Name ends with a dot or space; Windows serves it as shell.php" in reasons
+
+
+@pytest.mark.skipif(os.name != "nt", reason="trailing-dot names are a Windows quirk")
+def test_trailing_dot_file_on_disk_is_read_and_scanned(monitor: FileIntegrityMonitor, root: Path) -> None:
+    folder = root / "media" / "uploads"
+    with open("\\\\?\\" + str(folder / "shell.php."), "w", encoding="utf-8") as handle:
+        handle.write(marker("PHP_EVAL_SHELL"))
+
+    event = only(monitor.check())
+
+    assert event.relative_path == "media/uploads/shell.php."
+    assert event.severity is Severity.CRITICAL
+    assert event.reasons[0].startswith("Web shell signature")
+    assert "unreadable" not in event.new_sha256
+
+
+def test_executable_outside_public_folders_is_not_critical() -> None:
+    for ext in ALL_EXECUTABLE:
+        assert ChangeClassifier().classify(ChangeType.NEW, f"app/x{ext}.")[0] is Severity.MEDIUM
+
+
 # ---------------------------------------------------------------------------
 # Web shell signatures
 # ---------------------------------------------------------------------------

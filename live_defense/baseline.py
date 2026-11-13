@@ -163,7 +163,12 @@ class FileTree:
         return found
 
     def absolute(self, relative: str) -> str:
-        return os.path.join(self._root, *PurePosixPath(relative).parts)
+        """Full path; on Windows a name ending in a dot or space needs the ``\\?\`` form to open."""
+        parts = PurePosixPath(relative).parts
+        path = os.path.join(self._root, *parts)
+        if os.name == "nt" and any(p != p.rstrip(". ") for p in parts) and not path.startswith("\\\\"):
+            return "\\\\?\\" + path
+        return path
 
     def hash(self, relative: str, is_link: bool = False) -> str:
         """sha256 of the content; for a link, of its target text. ``UNREADABLE`` on error."""

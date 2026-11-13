@@ -27,7 +27,9 @@ class ChangeClassifier:
     """Severity and reasons of one change."""
 
     EXECUTABLE: ClassVar[FrozenSet[str]] = frozenset({
-        ".php", ".phtml", ".phar", ".py", ".js", ".jsp", ".aspx", ".sh", ".exe", ".dll",
+        ".php", ".php3", ".php4", ".php5", ".php7", ".php8", ".phtml", ".pht", ".phps", ".phar",
+        ".inc", ".asp", ".aspx", ".ashx", ".asmx", ".cshtml", ".jsp", ".jspx", ".jspf", ".cfm",
+        ".cgi", ".pl", ".py", ".js", ".sh", ".bat", ".ps1", ".exe", ".dll",
     })
     CODE: ClassVar[FrozenSet[str]] = EXECUTABLE | frozenset({
         ".ts", ".tsx", ".jsx", ".mjs", ".java", ".cs", ".html", ".htm", ".rb", ".go",
@@ -56,9 +58,11 @@ class ChangeClassifier:
         hits: Sequence[SignatureHit] = (),
         findings: Sequence[Issue] = (),
     ) -> Tuple[Severity, Tuple[str, ...]]:
-        path = PurePosixPath(relative)
+        path = self.normalized(relative)
         suffix = path.suffix.lower()
         rated: List[Tuple[Severity, str]] = []
+        if path.name != PurePosixPath(relative).name:
+            rated.append((Severity.LOW, f"Name ends with a dot or space; Windows serves it as {path.name}"))
 
         if change in (ChangeType.NEW, ChangeType.MODIFIED):
             for hit in hits:
@@ -99,7 +103,13 @@ class ChangeClassifier:
         return rated[0][0], tuple(reason for _, reason in rated)
 
     def is_code(self, relative: str) -> bool:
-        return PurePosixPath(relative).suffix.lower() in self.CODE
+        return self.normalized(relative).suffix.lower() in self.CODE
+
+    @staticmethod
+    def normalized(relative: str) -> PurePosixPath:
+        """Trailing dots and spaces dropped from every part: Windows ignores them."""
+        parts = [part.rstrip(". ") or part for part in PurePosixPath(relative).parts]
+        return PurePosixPath(*parts) if parts else PurePosixPath(relative)
 
     def _hidden_extension(self, path: PurePosixPath) -> str:
         """``shell.php.jpg`` -> ``.php``: an executable extension before a harmless one."""
