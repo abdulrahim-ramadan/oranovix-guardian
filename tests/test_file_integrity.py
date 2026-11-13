@@ -494,9 +494,10 @@ def test_harmless_code_has_no_signature(content: str) -> None:
 
 
 def test_signature_reports_its_line() -> None:
-    (hit,) = WebShellDetector.scan_text("<?php\n// x\n\n" + PHP_EVAL_SHELL)
+    hits = WebShellDetector.scan_text("<?php\n// x\n\n" + PHP_EVAL_SHELL)
 
-    assert hit.line == 4
+    assert {hit.rule for hit in hits} == {"php-eval-base64", "php-eval-on-input"}
+    assert {hit.line for hit in hits} == {4}
 
 
 def test_signature_in_a_modified_file_is_critical(monitor: FileIntegrityMonitor, root: Path) -> None:
