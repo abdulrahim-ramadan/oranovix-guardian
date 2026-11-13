@@ -31,7 +31,10 @@ PY_REQUEST_SHELL = "import os\ndef run(request):\n    os." + "popen(request." + 
 JSP_SHELL = "<% Runtime." + "getRuntime()." + "exec(request." + "getParameter(\"c\")); %>\n"
 LONG_BASE64 = "blob = '" + ("QUJD" * 600) + "'\n"
 
+PHP_EVAL_ON_POST = "<?php\nfunction helper() { " + "ev" + "al($_" + "POST['x']); }\n"
+
 PAYLOADS = {
+    "PHP_EVAL_ON_POST": PHP_EVAL_ON_POST,
     "PHP_EVAL_SHELL": PHP_EVAL_SHELL,
     "PHP_SYSTEM_SHELL": PHP_SYSTEM_SHELL,
     "PY_EXEC_SHELL": PY_EXEC_SHELL,
@@ -731,4 +734,99 @@ def test_scan_findings_are_attached(baseline: Baseline, root: Path) -> None:
     event = only(monitor.check())
 
     assert event.findings == [finding]
-    assert event.reasons[-1] == "Code scan: 1 finding(s), worst HIGH"
+    assert event.severity is Severity.HIGH
+    assert event.reasons[0] == "Code scan: os.system (line 4)"
+
+
+# ---------------------------------------------------------------------------
+# Event severity follows serious code-scan findings
+# ---------------------------------------------------------------------------
+
+def issue(severity: Severity, confidence: str = "HIGH", title: str = "Finding", line: int = 1) -> Issue:
+    return Issue(
+        rule_id="X1", title=title, description="", severity=severity, file_path="app/x.py",
+        line_number=line, category=IssueCategory.COMMAND_EXEC, confidence=confidence,
+    )
+
+
+@pytest.mark.parametrize(
+    "finding, severity",
+    [
+        (issue(Severity.CRITICAL), Severity.CRITICAL),
+        (issue(Severity.HIGH, "MEDIUM"), Severity.HIGH),
+        (issue(Severity.CRITICAL, "LOW"), Severity.MEDIUM),
+        (issue(Severity.MEDIUM), Severity.MEDIUM),
+        (issue(Severity.LOW), Severity.MEDIUM),
+    ],
+    ids=["critical", "high", "low-confidence", "medium", "low"],
+)
+def test_serious_findings_raise_the_event(finding: Issue, severity: Severity) -> None:
+    rated, _ = ChangeClassifier().classify(ChangeType.MODIFIED, "app/x.py", findings=[finding])
+
+    assert rated is severity
+
+
+def test_findings_never_lower_the_event() -> None:
+    rated, _ = ChangeClassifier().classify(
+        ChangeType.NEW, "uploads/x.php", findings=[issue(Severity.HIGH)]
+    )
+
+    assert rated is Severity.CRITICAL
+
+
+def test_reasons_list_the_worst_findings_first() -> None:
+    findings = [
+        issue(Severity.HIGH, title="Weak hash", line=9),
+        issue(Severity.CRITICAL, title="Command injection", line=3),
+        issue(Severity.MEDIUM, title="Debug on", line=1),
+    ]
+
+    _, reasons = ChangeClassifier().classify(ChangeType.MODIFIED, "app/x.py", findings=findings)
+
+    assert reasons[:2] == ("Code scan: Command injection (line 3)", "Code scan: Weak hash (line 9)")
+    assert reasons[-1] == "Code scan: 3 finding(s), worst CRITICAL"
+
+
+@pytest.fixture
+def real_engine_reads_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scan engine reads files with ``Path.read_text``: put the payload back in memory there."""
+    original = Path.read_text
+
+    def read_text(self: Path, *args, **kwargs) -> str:
+        text = original(self, *args, **kwargs)
+        for name, payload in PAYLOADS.items():
+            text = text.replace(marker(name), payload)
+        return text
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+@pytest.mark.usefixtures("real_engine_reads_payloads")
+def test_eval_on_post_in_a_helper_is_critical_like_the_alarm(
+    baseline: Baseline, root: Path, tmp_path: Path, channel: RecordingChannel
+) -> None:
+    center = AlarmCenter(SqliteSeenFindingStore(str(tmp_path / "alarms.db")), [channel])
+    monitor = FileIntegrityMonitor(baseline, alarm_center=center)       # real scan engine
+    write(root / "app" / "helpers.php", marker("PHP_EVAL_ON_POST"))
+
+    event = only(monitor.check())
+
+    assert event.severity is Severity.CRITICAL
+    assert any(r.startswith("Code scan: ") and r.endswith("(line 2)") for r in event.reasons), event.reasons
+    assert channel.alarms and channel.alarms[0].level is AlarmLevel.CRITICAL
+
+
+@pytest.mark.usefixtures("real_engine_reads_payloads")
+def test_code_scan_alone_sets_the_severity(
+    baseline: Baseline, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(WebShellDetector, "scan_file", staticmethod(lambda path: []))
+    monitor = FileIntegrityMonitor(baseline)                            # real scan engine
+    write(root / "app" / "helpers.php", marker("PHP_EVAL_ON_POST"))
+
+    event = only(monitor.check())
+
+    assert not any(r.startswith("Web shell") for r in event.reasons)
+    assert event.severity is Severity.CRITICAL
+    worst = max(f.severity.weight for f in event.findings)
+    assert worst == Severity.CRITICAL.weight

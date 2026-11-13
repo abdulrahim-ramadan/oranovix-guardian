@@ -49,6 +49,8 @@ class ChangeClassifier:
         "settings.py", "wsgi.py", "asgi.py", "urls.py", ".htaccess", ".user.ini", "web.config",
         "nginx.conf", "httpd.conf", "apache2.conf",
     })
+    SERIOUS: ClassVar[FrozenSet[Severity]] = frozenset({Severity.HIGH, Severity.CRITICAL})
+    LISTED_FINDINGS: ClassVar[int] = 3
     SERVER_CONF_DIRS: ClassVar[FrozenSet[str]] = frozenset({
         "nginx", "apache", "apache2", "httpd", "conf.d", "sites-available", "sites-enabled",
     })
@@ -111,7 +113,14 @@ class ChangeClassifier:
             else:
                 rated.append((Severity.MEDIUM, "File deleted"))
 
-        if findings:
+        # Serious findings set the event severity, so the list matches the alarm.
+        serious = sorted(
+            (f for f in findings if f.severity in self.SERIOUS and str(f.confidence).upper() != "LOW"),
+            key=lambda issue: (-issue.severity.weight, issue.line_number),
+        )
+        for issue in serious[: self.LISTED_FINDINGS]:
+            rated.append((issue.severity, f"Code scan: {issue.title} (line {issue.line_number})"))
+        if len(findings) > len(serious[: self.LISTED_FINDINGS]):
             worst = max(findings, key=lambda issue: issue.severity.weight).severity
             rated.append((Severity.LOW, f"Code scan: {len(findings)} finding(s), worst {worst.value}"))
 
