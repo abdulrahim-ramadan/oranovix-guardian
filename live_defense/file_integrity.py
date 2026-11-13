@@ -18,8 +18,8 @@ from core.alarm_center import AlarmCenter
 from scanner_engine.base import Issue, Severity
 
 from .base import ChangeType, IntegrityEvent, Monitor, ReportListener
-from .baseline import TAMPER_REASON, UNREADABLE, Baseline, FileState, FileTree
-from .paths import PUBLIC_DIRS, public_part
+from .baseline import TAMPER_REASON, UNREADABLE, Baseline, FileState, FileTree, StatInfo
+from .paths import PUBLIC_DIRS, LinkInfo, public_part
 from .webshell import SignatureHit, WebShellDetector
 
 FileScanner = Callable[[str], List[Issue]]
@@ -60,6 +60,7 @@ class ChangeClassifier:
         hits: Sequence[SignatureHit] = (),
         findings: Sequence[Issue] = (),
         root_name: str = "",
+        link: Optional[LinkInfo] = None,
     ) -> Tuple[Severity, Tuple[str, ...]]:
         """*root_name* is the monitored folder's own name: monitoring ``uploads`` directly is still public."""
         path = self.normalized(relative)
@@ -83,6 +84,8 @@ class ChangeClassifier:
                 Severity.CRITICAL,
                 f"{verb.get(change, 'Changed')} server configuration file {path.name} in the {public}/ folder",
             ))
+        if link is not None and change in (ChangeType.NEW, ChangeType.MODIFIED):
+            rated.append(self._link_risk(change, link, public))
         if change is ChangeType.NEW:
             if suffix in self.EXECUTABLE and public:
                 rated.append((Severity.CRITICAL, f"New executable file in the {public}/ folder"))
@@ -111,6 +114,17 @@ class ChangeClassifier:
 
         rated.sort(key=lambda item: -item[0].weight)
         return rated[0][0], tuple(reason for _, reason in rated)
+
+    @staticmethod
+    def _link_risk(change: ChangeType, link: LinkInfo, public: str) -> Tuple[Severity, str]:
+        what = "New link" if change is ChangeType.NEW else "Changed link"
+        if public and link.outside_root:
+            return Severity.CRITICAL, (
+                f"{what} in the {public}/ folder points outside the monitored folder: {link.target}"
+            )
+        if public:
+            return Severity.HIGH, f"{what} in the {public}/ folder points to {link.target}"
+        return Severity.MEDIUM, f"{what} points to {link.target}"
 
     def is_code(self, relative: str) -> bool:
         return self.normalized(relative).suffix.lower() in self.CODE
@@ -277,7 +291,8 @@ class FileIntegrityMonitor(Monitor):
     def _compare(self, full: bool) -> List[IntegrityEvent]:
         tree = self._baseline.tree()
         known = self._baseline.entries()
-        current = self._current_states(tree, full)
+        walked = tree.walk()
+        current = self._current_states(tree, walked, full)
 
         changes: List[Tuple[ChangeType, str, str, str]] = []
         for relative, state in current.items():
@@ -295,14 +310,16 @@ class FileIntegrityMonitor(Monitor):
             event_id = f"{change.value}|{relative}|{old}|{new}"
             if event_id in self._open:
                 continue
-            event = self._event(tree, change, relative, old, new)
+            event = self._event(tree, change, relative, old, new, walked.get(relative))
             self._remember(event)
             events.append(event)
         return events
 
-    def _current_states(self, tree: FileTree, full: bool) -> Dict[str, FileState]:
+    def _current_states(
+        self, tree: FileTree, walked: Dict[str, StatInfo], full: bool
+    ) -> Dict[str, FileState]:
         states: Dict[str, FileState] = {}
-        for relative, info in tree.walk().items():
+        for relative, info in walked.items():
             cached = self._observed.get(relative)
             if (
                 not full and cached is not None
@@ -318,16 +335,19 @@ class FileIntegrityMonitor(Monitor):
         return states
 
     def _event(
-        self, tree: FileTree, change: ChangeType, relative: str, old: str, new: str
+        self, tree: FileTree, change: ChangeType, relative: str, old: str, new: str,
+        info: Optional[StatInfo] = None,
     ) -> IntegrityEvent:
         path = tree.absolute(relative)
         hits: List[SignatureHit] = []
         findings: List[Issue] = []
-        if change is not ChangeType.DELETED:
+        link = tree.link_info(relative) if info is not None and info.is_link else None
+        # A link's content belongs to its target, which may lie outside the root.
+        if change is not ChangeType.DELETED and link is None:
             hits = WebShellDetector.scan_file(path)
             findings = self._scan_file(path)
         severity, reasons = self._classifier.classify(
-            change, relative, hits, findings, root_name=self._root_name
+            change, relative, hits, findings, root_name=self._root_name, link=link
         )
         if new == UNREADABLE:
             # Often an antivirus that locked or removed the file: worth knowing.

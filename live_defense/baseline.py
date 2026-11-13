@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from core.secret_store import SecretStore
-from .paths import public_part
+from .paths import LinkInfo, is_inside, public_part, strip_extended_prefix
 
 HMAC_KEY_NAME = "file_integrity_hmac_key"
 UNREADABLE = "unreadable"
@@ -184,6 +184,19 @@ class FileTree:
         except OSError:
             return UNREADABLE
         return digest.hexdigest()
+
+    def link_info(self, relative: str) -> LinkInfo:
+        path = self.absolute(relative)
+        try:
+            target = strip_extended_prefix(os.readlink(path))
+        except (OSError, ValueError):
+            target = ""
+        try:
+            resolved = strip_extended_prefix(os.path.realpath(path))
+        except (OSError, ValueError):
+            resolved = ""
+        inside = bool(target and resolved) and is_inside(resolved, os.path.realpath(self._root))
+        return LinkInfo(target or resolved or "unknown target", resolved, not inside)
 
     def state(self, relative: str, info: StatInfo) -> FileState:
         return FileState(info.size, info.mtime_ns, self.hash(relative, info.is_link))
