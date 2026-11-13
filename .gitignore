@@ -62,6 +62,10 @@ htmlcov/
 # ── Logs ──────────────────────────────────────────────────────────────────
 *.log
 
+# Generated PDF reports
+reports/output/
+*security_report*.pdf
+
 # ── Test corpus (intentionally vulnerable fixtures, must stay tracked) ────
 !tests/corpus/**
 tests/corpus/**/__pycache__/
