@@ -61,6 +61,7 @@ class ChangeClassifier:
         findings: Sequence[Issue] = (),
         root_name: str = "",
         link: Optional[LinkInfo] = None,
+        too_large: bool = False,
     ) -> Tuple[Severity, Tuple[str, ...]]:
         """*root_name* is the monitored folder's own name: monitoring ``uploads`` directly is still public."""
         path = self.normalized(relative)
@@ -86,6 +87,8 @@ class ChangeClassifier:
             ))
         if link is not None and change in (ChangeType.NEW, ChangeType.MODIFIED):
             rated.append(self._link_risk(change, link, public))
+        if too_large and change in (ChangeType.NEW, ChangeType.MODIFIED):
+            rated.append((Severity.MEDIUM, "File too large to scan fully"))
         if change is ChangeType.NEW:
             if suffix in self.EXECUTABLE and public:
                 rated.append((Severity.CRITICAL, f"New executable file in the {public}/ folder"))
@@ -343,11 +346,14 @@ class FileIntegrityMonitor(Monitor):
         findings: List[Issue] = []
         link = tree.link_info(relative) if info is not None and info.is_link else None
         # A link's content belongs to its target, which may lie outside the root.
+        too_large = False
         if change is not ChangeType.DELETED and link is None:
             hits = WebShellDetector.scan_file(path)
             findings = self._scan_file(path)
+            too_large = info is not None and WebShellDetector.too_large(info.size)
         severity, reasons = self._classifier.classify(
-            change, relative, hits, findings, root_name=self._root_name, link=link
+            change, relative, hits, findings,
+            root_name=self._root_name, link=link, too_large=too_large,
         )
         if new == UNREADABLE:
             # Often an antivirus that locked or removed the file: worth knowing.

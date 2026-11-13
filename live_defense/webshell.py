@@ -10,7 +10,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import ClassVar, List, Optional, Pattern, Sequence, Tuple
+from typing import BinaryIO, ClassVar, Dict, List, Optional, Pattern, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -239,7 +239,9 @@ class LongBase64LiteralRule(WebShellRule):
 class WebShellDetector:
     """Runs every signature over a file's content."""
 
-    MAX_BYTES = 5 * 1024 * 1024
+    CHUNK = 1024 * 1024
+    OVERLAP = 256               # a signature across a chunk border is still seen
+    MAX_BYTES = 50 * 1024 * 1024
     RULES: ClassVar[Sequence[WebShellRule]] = (
         PhpEvalBase64Rule(),
         PhpCommandOnInputRule(),
@@ -258,18 +260,46 @@ class WebShellDetector:
 
     @classmethod
     def scan_text(cls, text: str) -> List[SignatureHit]:
-        lowered = text.lower()
-        return [
-            hit for rule in cls.RULES if rule.applies(lowered)
-            for hit in [rule.find(text)] if hit is not None
-        ]
+        return cls._scan(text, cls.RULES)
+
+    @classmethod
+    def scan_stream(cls, handle: BinaryIO, limit: Optional[int] = None) -> List[SignatureHit]:
+        """First hit of every rule in the first *limit* bytes, read in overlapping chunks."""
+        limit = cls.MAX_BYTES if limit is None else limit
+        found: Dict[str, SignatureHit] = {}
+        carry = ""
+        lines_before = 0            # newlines before the start of the current window
+        read = 0
+        while read < limit and len(found) < len(cls.RULES):
+            data = handle.read(min(cls.CHUNK, limit - read))
+            if not data:
+                break
+            read += len(data)
+            window = carry + data.decode("latin-1")
+            pending = [rule for rule in cls.RULES if rule.name not in found]
+            for hit in cls._scan(window, pending):
+                found[hit.rule] = SignatureHit(hit.rule, hit.description, hit.line + lines_before)
+            carry = window[-cls.OVERLAP:]
+            lines_before += window.count("\n") - carry.count("\n")
+        return [found[rule.name] for rule in cls.RULES if rule.name in found]
 
     @classmethod
     def scan_file(cls, path: str) -> List[SignatureHit]:
         """Hits in the first ``MAX_BYTES`` of the file; none when it cannot be read."""
         try:
             with open(path, "rb") as handle:
-                data = handle.read(cls.MAX_BYTES)
+                return cls.scan_stream(handle)
         except OSError:
             return []
-        return cls.scan_text(data.decode("latin-1"))
+
+    @classmethod
+    def too_large(cls, size: int) -> bool:
+        return size > cls.MAX_BYTES
+
+    @staticmethod
+    def _scan(text: str, rules: Sequence[WebShellRule]) -> List[SignatureHit]:
+        lowered = text.lower()
+        return [
+            hit for rule in rules if rule.applies(lowered)
+            for hit in [rule.find(text)] if hit is not None
+        ]
