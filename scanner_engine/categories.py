@@ -39,6 +39,7 @@ class IssueCategory(str, Enum):
     COOKIE_SECURITY = "cookie_security"
     CORS = "cors"
     DEPENDENCY = "dependency"
+    INTEGRITY = "integrity"
     OTHER = "other"
 
     @classmethod
@@ -131,6 +132,9 @@ RULE_CATEGORIES: dict[str, IssueCategory] = {
     "DT001": _C.XSS, "DT002": _C.XSS,
     # Dependencies
     "DEP001": _C.DEPENDENCY, "DEP002": _C.DEPENDENCY,
+    # Live Defense: file integrity
+    "FIM001": _C.INTEGRITY, "FIM002": _C.INTEGRITY,
+    "FIM003": _C.INTEGRITY, "FIM004": _C.INTEGRITY,
 }
 
 
