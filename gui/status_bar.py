@@ -50,6 +50,14 @@ class StatusBar(ctk.CTkFrame):
         )
         self._status_lbl.pack(side="left")
 
+        self._monitor_lbl = ctk.CTkLabel(
+            self,
+            text=f"◉ {lm.t('ld_monitoring_badge')}",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color=tm.c("success"),
+            fg_color="transparent",
+        )
+
         # Right: language + version
         ctk.CTkLabel(
             self,
@@ -93,6 +101,13 @@ class StatusBar(ctk.CTkFrame):
         }
         self._status_lbl.configure(text=text, text_color=color_map.get(level, tm.c("text2")))
         self._dot.configure(text_color=dot_map.get(level, tm.c("text3")))
+
+    def set_monitoring(self, active: bool) -> None:
+        """Show or hide the Live Defense "Monitoring" indicator."""
+        if active and not self._monitor_lbl.winfo_ismapped():
+            self._monitor_lbl.pack(side="left", padx=(16, 0))
+        elif not active:
+            self._monitor_lbl.pack_forget()
 
     def refresh_theme(self) -> None:
         tm = ThemeManager()

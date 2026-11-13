@@ -1,5 +1,74 @@
 # Oranovix Guardian — Development Progress
 
+## Live Defense: file integrity (branch `feature/file-integrity`)
+
+Goal: detect planted or modified files in a monitored project folder. This is the first Live Defense module.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `Monitor` (ABC): `start()`, `stop()`, `is_running`, abstract `check()`. One background thread per monitor with a stop `Event`; a failing cycle is reported and the thread keeps running. Results go out through an `on_report` callback; the monitor never touches Tk. Events of severity HIGH and CRITICAL go to the shared `AlarmCenter` with `full_scan=False`. | `live_defense/base.py` |
+| 2 | `Baseline`: one SQLite table per monitored root in `integrity.db` (relative path, sha256, size, mtime). Files are hashed in chunks. Symlinks and junctions are recorded but never followed. All file types are covered. `EXCLUDED_DIRS`, `*.pyc`, `*.log`, `db.sqlite3` and user patterns are ignored. An HMAC-SHA256 over the sorted rows is stored with the table; its key is kept in the credential store (`SecretStore`, entry `file_integrity_hmac_key`). The HMAC is checked before every check. A mismatch, a missing record or a missing key gives a CRITICAL event "Baseline was modified outside the app". | `live_defense/baseline.py` |
+| 3 | `FileIntegrityMonitor`: every N seconds (default 30) a quick pass compares size and mtime and hashes only changed files. Every 10th cycle, and the first one after start, re-hashes everything to catch timestomping. Events are NEW, MODIFIED and DELETED. Severity rules: a new executable in upload/media/static/public/tmp folders is CRITICAL; so are a double extension (`x.php.jpg`) and a web shell signature. A change to settings.py, `.env*`, wsgi/asgi/urls.py, `.htaccess`, nginx/apache conf or a Dockerfile is HIGH. Other source changes and deletions are MEDIUM, and new non-code files are LOW. There are six web shell rules, one class each. NEW and MODIFIED scannable files also go through `ScanOrchestrator`, and its findings are attached to the event and reach the alarm. The finding id contains the new sha256, so each new state alarms once. | `live_defense/file_integrity.py`, `live_defense/webshell.py` |
+| 4 | Accepting: `accept(ids)` and `accept_all()` write the current state of those files into the baseline and re-sign it. Unaccepted events stay open. A tamper event cannot be accepted; only a new baseline clears it. Saving new ignore patterns drops matching rows, re-signs, and closes matching events. | `live_defense/file_integrity.py`, `live_defense/baseline.py` |
+| 5 | Sidebar page "Live Defense" with folder, Create baseline, Start/Stop, interval, ignore patterns and the open events table. The table shows time, severity, change, type, path and reason, with Accept, Scan file, Accept all and a severity filter. `LiveDefenseController` owns the monitor, so it keeps running across theme and language rebuilds. It sends state to listeners through `widget.after` and stores root, interval and running in `settings.json`. A "Monitoring" badge appears in the status bar while a monitor runs. If monitoring was on when the app closed, the next start asks before resuming. Config files show the language "Config". Texts are in AR/DE/EN. | `live_defense/controller.py`, `gui/pages/live_defense_page.py`, `gui/confirm_dialog.py`, `gui/app.py`, `gui/sidebar.py`, `gui/status_bar.py`, `translations/` |
+| 6 | Tests (no GUI, no sleeps, `check()` called directly) cover all the cases in the spec. Shell-shaped and key-shaped test values are built at runtime. | `tests/test_monitor_base.py`, `tests/test_baseline.py`, `tests/test_file_integrity.py`, `tests/test_accept_changes.py`, `tests/test_live_defense_controller.py` |
+| 7 | `core/oranovix_security_report.pdf` is no longer tracked (the file stays on disk). `reports/output/` and `*security_report*.pdf` are ignored. | `.gitignore` |
+
+Tests: 539 passing, 1 skipped. Type check: `uvx pyright`, 0 errors.
+
+### Review fixes (second round)
+
+A review found gaps in what the monitor could see and how it rated what it saw.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | The scanner's `EXCLUDED_DIRS` no longer applies. The monitor skips only `__pycache__`, `node_modules`, `venv`, `.venv`, `site-packages` and `.git/objects`, and not even those when any parent folder (or the monitored folder itself) is public. `build`, `dist`, `migrations`, `env` and the rest of `.git` (hooks!) are always watched. | `live_defense/baseline.py`, `live_defense/paths.py` |
+| 2 | Names are normalised before classifying: trailing dots and spaces are dropped (Windows serves `shell.php.` as `shell.php`), and such files are opened through the extended-length path so their content is still read. Executable list: the PHP variants (`.php3`-`.php8`, `.pht`, `.phps`, `.inc`), `.asp`, `.ashx`, `.asmx`, `.cshtml`, `.jspx`, `.jspf`, `.cfm`, `.cgi`, `.pl`, `.bat`, `.ps1`, plus the earlier ones. The hidden-extension check uses all of them. | `live_defense/classifier.py`, `live_defense/baseline.py` |
+| 3 | Public folders also include `files`, `images`, `img`, `assets`, `attachments`, `storage`, `cache`, `downloads`, `public_html`, `www` and `wp-content`. The monitored folder's own name counts, so monitoring `uploads` directly is public. Inside a public folder, `.htaccess`, `.user.ini` and `web.config` are CRITICAL (new, changed or deleted). | `live_defense/paths.py`, `live_defense/classifier.py` |
+| 4 | Links: a new or changed symlink or junction is MEDIUM. It is HIGH inside a public folder, and CRITICAL when it is in a public folder and resolves outside the monitored folder. The reason names the target. Link content is not scanned. | `live_defense/classifier.py`, `live_defense/baseline.py` |
+| 5 | Seven new signatures, one class each: eval/assert/create_function/include/require on superglobals; backtick execution of input; a superglobal called as a function; eval of gzinflate/gzuncompress/str_rot13 chains; `preg_replace` with `/e`; a function name glued from string pieces and called on input; Python eval/exec/compile/`__import__` on request data. Each has at least two hits and two near misses in the tests. Every rule has key words it needs, so a rule skips text that cannot match. A 1.6 MB plain Python file now takes 0.01 s instead of about 0.4 s. | `live_defense/webshell.py` |
+| 6 | Files are scanned in 1 MB chunks with a 256-byte overlap, up to 50 MB (it used to be the first 5 MB). A bigger file gets "File too large to scan fully" and is at least MEDIUM. | `live_defense/webshell.py` |
+| 7 | A HIGH or CRITICAL code-scan finding (with confidence other than LOW) now sets the event severity, and the reasons name it with its line. The event list now shows the same severity as the alarm. | `live_defense/classifier.py` |
+| 8 | Creating a baseline first checks every file. A file is left out of the baseline if it has a web shell signature, a hidden executable extension, an executable in an upload-type folder, or is a link in a public folder. The first check then reports it as NEW with its real severity and sounds the alarm. `create_baseline` returns the count and the refused files. The page shows "N files look suspicious and were left out of the baseline" with the list (AR/DE/EN). Code in web roots (`static`, `public`, `assets`, `public_html`, `www`, `wp-content`, `cache`, `storage`) is not refused for its extension alone, because a site's own JS and PHP live there. | `live_defense/baseline.py`, `live_defense/classifier.py`, `live_defense/controller.py`, `gui/pages/live_defense_page.py` |
+
+Tests: 971 passing, 5 skipped (the symlink tests need a right this account lacks; the same cases run with directory junctions). Type check: `uvx pyright`, 0 errors.
+
+Attack matrix, run by hand with the real monitor, signatures and scan engine. Every row raised an alarm except the plain image:
+
+| Attack | Event | Severity |
+|--------|-------|----------|
+| Shell in `public/build/` | NEW, web shell signature | CRITICAL |
+| Shell in `static/dist/` | NEW, web shell signature | CRITICAL |
+| Shell in `static/node_modules/` | NEW, web shell signature | CRITICAL |
+| Shell in `.git/hooks/` | NEW, web shell signature | CRITICAL |
+| `uploads/x.php5`, `.pht`, `.asp`, `.ashx` (harmless body) | NEW, executable in uploads/ | CRITICAL |
+| `uploads/shell.php.` (trailing dot) | NEW, content read, web shell signature | CRITICAL |
+| `.htaccess` in uploads | NEW, server configuration file in uploads/ | CRITICAL |
+| Root named `uploads`, new `shell.php` | NEW | CRITICAL |
+| Root named `uploads`, new `photo.jpg` | NEW | LOW, no alarm |
+| Link to a system folder in uploads (junction; symlinks not permitted here) | NEW, points outside the monitored folder | CRITICAL |
+| Payload after 6 MB of padding | NEW, signature found on line 62916 | CRITICAL |
+| Baseline created on a folder with a shell | shell left out of the baseline, NEW on first check | CRITICAL |
+
+### Known limits
+
+- This is still timer based, not file system events. A file that is planted and removed again between two checks is not seen.
+- One monitored folder at a time.
+- Open events live in memory. After a restart, unaccepted changes are found again on the first check, which is a full pass.
+- A timestomped change (same size and mtime) is only found by the full re-hash, so it can take up to 10 intervals.
+- The HMAC protects the baseline against edits outside the app. An attacker who can read the user's credential store can still re-sign it.
+- Signatures longer than the 256-byte overlap (a base64 literal over 2000 characters, or a glued name called more than 256 bytes later) can be missed when they cross a 1 MB chunk border. Only the first 50 MB of a file are scanned.
+- Watching all of `.git` means normal commits and pulls produce LOW and MEDIUM events in `.git/` (refs, logs, index).
+- `storage` and `cache` are public folders, so frameworks that write compiled code there (for example Laravel's `storage/framework/views/*.php`) raise CRITICAL events for every new compiled file. Add an ignore pattern for such folders.
+- A legitimate file that the baseline refuses stays out of every new baseline. Accept it once in the events list, or add an ignore pattern.
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet. The branch is not merged.
+- `integrity.db` is written next to `settings.json` and is gitignored. No new dependencies.
+
+---
+
 ## Dependency scan (branch `feature/dependency-scan`)
 
 Goal: report known vulnerabilities (CVE / GHSA) in the packages a project depends on. Works offline after a one-time database download.

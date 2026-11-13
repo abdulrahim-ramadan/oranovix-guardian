@@ -1,5 +1,5 @@
 {
-  "include": ["main.py", "assets", "core", "gui", "reports", "scanner_engine", "tests"],
+  "include": ["main.py", "assets", "core", "gui", "live_defense", "reports", "scanner_engine", "tests"],
   "exclude": ["tests/corpus", "venv", "build", "dist", "release", "**/__pycache__"],
   "venvPath": ".",
   "venv": "venv"

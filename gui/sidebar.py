@@ -171,6 +171,7 @@ class Sidebar(ctk.CTkFrame):
         # (icon, i18n_key, page_id)
         ("🏠", "nav_dashboard", "dashboard"),
         ("🔍", "nav_scanner",   "scanner"),
+        ("🛡", "nav_live_defense", "live_defense"),
         ("📊", "nav_reports",   "reports"),
         ("⚙️",  "nav_settings",  "settings"),
     ]
@@ -238,6 +239,7 @@ class Sidebar(ctk.CTkFrame):
         _nav_fallbacks = {
             "nav_dashboard": "Dashboard",
             "nav_scanner":   "Scanner",
+            "nav_live_defense": "Live Defense",
             "nav_reports":   "Reports",
             "nav_settings":  "Settings",
         }

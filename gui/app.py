@@ -32,7 +32,7 @@ import os
 import sys
 import threading
 import tkinter as tk
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import customtkinter as ctk
 
@@ -46,6 +46,9 @@ from gui.splash_screen     import SplashScreen
 from gui.title_bar         import CustomTitleBar
 from gui.sidebar           import Sidebar
 from gui.status_bar        import StatusBar
+
+if TYPE_CHECKING:
+    from live_defense.controller import LiveDefenseController, LiveDefenseState
 # gui.pages and scanner_engine are imported lazily inside methods
 # to keep startup fast (splash appears before heavy imports load)
 
@@ -92,6 +95,7 @@ class CodeGuardianApp(ctk.CTk):
         # a theme/language rebuild.
         self._current_page:  str          = "scanner"
         self._scan_result:   Optional[object] = None
+        self._live_defense:  Optional[LiveDefenseController] = None
 
         # Register observers so theme/language changes trigger a rebuild.
         # These registrations persist across UI rebuilds because the
@@ -227,6 +231,7 @@ class CodeGuardianApp(ctk.CTk):
         # Small delay before patching the taskbar entry; the HWND must be
         # fully visible for SetWindowLongW to take effect reliably.
         self.after(100, self._restore_taskbar_entry)
+        self.after(400, self._offer_live_defense_resume)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -293,7 +298,7 @@ class CodeGuardianApp(ctk.CTk):
         ``"results"`` key is an alias for ``"dashboard"`` so that both
         IDs resolve to the same :class:`~gui.pages.ResultsPage` instance.
         """
-        from gui.pages import ScannerPage, ResultsPage, ReportsPage, SettingsPage
+        from gui.pages import ScannerPage, ResultsPage, ReportsPage, SettingsPage, LiveDefensePage
 
         args = dict(master=self._content)
 
@@ -301,6 +306,7 @@ class CodeGuardianApp(ctk.CTk):
             from gui.alarm_channels import build_alarm_center
             self._alarm_center = build_alarm_center(self)
 
+        controller = self._live_defense_controller()
         self._pages["scanner"] = ScannerPage(
             **args,
             on_scan_complete=self._on_scan_complete,
@@ -314,19 +320,74 @@ class CodeGuardianApp(ctk.CTk):
         )
         # "results" is a navigation alias that points to the same widget
         self._pages["results"] = self._pages["dashboard"]
+        self._pages["live_defense"] = LiveDefensePage(
+            **args,
+            controller=controller,
+            on_status=self._status_bar.set_status,
+            on_scan_result=self._on_scan_complete,
+        )
         self._pages["reports"]  = ReportsPage(**args)
         self._pages["settings"] = SettingsPage(
             **args,
             on_theme_toggle=self._toggle_theme,
             on_lang_change=self._change_lang,
         )
+        self._status_bar.set_monitoring(controller.is_running)
+
+    # ------------------------------------------------------------------
+    # Live Defense
+    # ------------------------------------------------------------------
+
+    def _live_defense_controller(self) -> LiveDefenseController:
+        """The controller outlives UI rebuilds, so a running monitor keeps running."""
+        if self._live_defense is None:
+            from live_defense.controller import LiveDefenseController
+            self._live_defense = LiveDefenseController(
+                dispatch=lambda fn: self.after(0, fn),
+                alarm_center=self._alarm_center,
+            )
+            self._live_defense.add_listener(self._on_live_defense_state)
+        return self._live_defense
+
+    def _on_live_defense_state(self, state: LiveDefenseState) -> None:
+        from gui.pages.live_defense_page import toast_new_events
+        try:
+            self._status_bar.set_monitoring(state.running)
+            toast_new_events(self, state)
+        except tk.TclError:
+            pass                # status bar is being rebuilt
+
+    def _offer_live_defense_resume(self) -> None:
+        from gui.confirm_dialog import ConfirmDialog
+        controller = self._live_defense_controller()
+        root = controller.resume_candidate()
+        if not root:
+            return
+        lm = LanguageManager()
+        choice = ConfirmDialog.ask(
+            self, lm.t("ld_resume_title"), lm.t("ld_resume_text", root=root),
+            lm.t("ld_resume_yes"), lm.t("ld_resume_no"),
+        )
+        if not choice:
+            controller.stop()
+            return
+        try:
+            controller.start()
+        except Exception as exc:
+            self._status_bar.set_status(str(exc), "error")
+        controller.notify()
+
+    def destroy(self) -> None:
+        if self._live_defense is not None:
+            self._live_defense.shutdown()
+        super().destroy()
 
     def _navigate(self, page_id: str) -> None:
         """Show the requested page and hide all others.
 
         Args:
             page_id: Logical page identifier (``"scanner"``, ``"dashboard"``,
-                ``"results"``, ``"reports"``, or ``"settings"``).
+                ``"results"``, ``"live_defense"``, ``"reports"``, or ``"settings"``).
                 Unknown IDs fall back to ``"scanner"``.
         """
         # Unpack every page widget to clear the content area
