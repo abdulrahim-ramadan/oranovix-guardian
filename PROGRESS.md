@@ -1,5 +1,36 @@
 # Oranovix Guardian — Development Progress
 
+## Live Defense: file integrity (branch `feature/file-integrity`)
+
+Goal: detect planted or modified files in a monitored project folder. This is the first Live Defense module.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `Monitor` (ABC): `start()`, `stop()`, `is_running`, abstract `check()`. One background thread per monitor with a stop `Event`; a failing cycle is reported and the thread keeps running. Results go out through an `on_report` callback; the monitor never touches Tk. Events of severity HIGH and CRITICAL go to the shared `AlarmCenter` with `full_scan=False`. | `live_defense/base.py` |
+| 2 | `Baseline`: one SQLite table per monitored root in `integrity.db` (relative path, sha256, size, mtime). Files are hashed in chunks. Symlinks and junctions are recorded but never followed. All file types are covered. `EXCLUDED_DIRS`, `*.pyc`, `*.log`, `db.sqlite3` and user patterns are ignored. An HMAC-SHA256 over the sorted rows is stored with the table; its key is kept in the credential store (`SecretStore`, entry `file_integrity_hmac_key`). The HMAC is checked before every check. A mismatch, a missing record or a missing key gives a CRITICAL event "Baseline was modified outside the app". | `live_defense/baseline.py` |
+| 3 | `FileIntegrityMonitor`: every N seconds (default 30) a quick pass compares size and mtime and hashes only changed files. Every 10th cycle, and the first one after start, re-hashes everything to catch timestomping. Events are NEW, MODIFIED and DELETED. Severity rules: a new executable in upload/media/static/public/tmp folders is CRITICAL; so are a double extension (`x.php.jpg`) and a web shell signature. A change to settings.py, `.env*`, wsgi/asgi/urls.py, `.htaccess`, nginx/apache conf or a Dockerfile is HIGH. Other source changes and deletions are MEDIUM, and new non-code files are LOW. There are six web shell rules, one class each. NEW and MODIFIED scannable files also go through `ScanOrchestrator`, and its findings are attached to the event and reach the alarm. The finding id contains the new sha256, so each new state alarms once. | `live_defense/file_integrity.py`, `live_defense/webshell.py` |
+| 4 | Accepting: `accept(ids)` and `accept_all()` write the current state of those files into the baseline and re-sign it. Unaccepted events stay open. A tamper event cannot be accepted; only a new baseline clears it. Saving new ignore patterns drops matching rows, re-signs, and closes matching events. | `live_defense/file_integrity.py`, `live_defense/baseline.py` |
+| 5 | Sidebar page "Live Defense" with folder, Create baseline, Start/Stop, interval, ignore patterns and the open events table. The table shows time, severity, change, type, path and reason, with Accept, Scan file, Accept all and a severity filter. `LiveDefenseController` owns the monitor, so it keeps running across theme and language rebuilds. It sends state to listeners through `widget.after` and stores root, interval and running in `settings.json`. A "Monitoring" badge appears in the status bar while a monitor runs. If monitoring was on when the app closed, the next start asks before resuming. Config files show the language "Config". Texts are in AR/DE/EN. | `live_defense/controller.py`, `gui/pages/live_defense_page.py`, `gui/confirm_dialog.py`, `gui/app.py`, `gui/sidebar.py`, `gui/status_bar.py`, `translations/` |
+| 6 | Tests (no GUI, no sleeps, `check()` called directly) cover all the cases in the spec. Shell-shaped and key-shaped test values are built at runtime. | `tests/test_monitor_base.py`, `tests/test_baseline.py`, `tests/test_file_integrity.py`, `tests/test_accept_changes.py`, `tests/test_live_defense_controller.py` |
+| 7 | `core/oranovix_security_report.pdf` is no longer tracked (the file stays on disk). `reports/output/` and `*security_report*.pdf` are ignored. | `.gitignore` |
+
+Tests: 539 passing, 1 skipped. Type check: `uvx pyright`, 0 errors.
+
+### Known limits
+
+- This is polling, not file system events. A file that is planted and removed again between two checks is not seen.
+- A timestomped change (same size and mtime) is only found by the full re-hash, so it can take up to 10 intervals.
+- The HMAC protects the baseline against edits outside the app. An attacker who can read the user's credential store can still re-sign it.
+- Events live in memory. After a restart, unaccepted changes are found again on the first check, which is a full pass.
+- One monitored folder at a time.
+
+### Notes for the next build
+
+- Do not rebuild the exe from this branch yet. The branch is not merged.
+- `integrity.db` is written next to `settings.json` and is gitignored. No new dependencies.
+
+---
+
 ## Dependency scan (branch `feature/dependency-scan`)
 
 Goal: report known vulnerabilities (CVE / GHSA) in the packages a project depends on. Works offline after a one-time database download.
