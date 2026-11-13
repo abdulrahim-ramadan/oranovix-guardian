@@ -10,7 +10,9 @@ from __future__ import annotations
 from typing import FrozenSet, Iterable
 
 PUBLIC_DIRS: FrozenSet[str] = frozenset({
-    "upload", "uploads", "media", "static", "public", "tmp", "temp",
+    "upload", "uploads", "media", "static", "public", "tmp", "temp", "files", "images",
+    "img", "assets", "attachments", "storage", "cache", "downloads", "public_html", "www",
+    "wp-content",
 })
 
 

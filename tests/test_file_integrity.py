@@ -291,7 +291,7 @@ def test_deleted_sensitive_file_is_high(monitor: FileIntegrityMonitor, root: Pat
         (ChangeType.NEW, "media/a.phtml", Severity.CRITICAL),
         (ChangeType.NEW, "static/logo.png", Severity.LOW),
         (ChangeType.NEW, "app/helpers.py", Severity.MEDIUM),
-        (ChangeType.NEW, "media/.htaccess", Severity.HIGH),
+        (ChangeType.NEW, "media/.htaccess", Severity.CRITICAL),
         (ChangeType.NEW, "docs/guide.pdf", Severity.LOW),
         (ChangeType.NEW, "docs/report.pdf.exe", Severity.MEDIUM),
         (ChangeType.NEW, "static/js/app.js.map", Severity.LOW),
@@ -302,7 +302,9 @@ def test_deleted_sensitive_file_is_high(monitor: FileIntegrityMonitor, root: Pat
         (ChangeType.MODIFIED, "shop/wsgi.py", Severity.HIGH),
         (ChangeType.MODIFIED, "shop/asgi.py", Severity.HIGH),
         (ChangeType.MODIFIED, "shop/urls.py", Severity.HIGH),
-        (ChangeType.MODIFIED, "public/.htaccess", Severity.HIGH),
+        (ChangeType.MODIFIED, "public/.htaccess", Severity.CRITICAL),
+        (ChangeType.MODIFIED, "conf/.htaccess", Severity.HIGH),
+        (ChangeType.MODIFIED, "web.config", Severity.HIGH),
         (ChangeType.MODIFIED, "deploy/nginx/site.conf", Severity.HIGH),
         (ChangeType.MODIFIED, "etc/apache2/sites-enabled/000-default", Severity.HIGH),
         (ChangeType.MODIFIED, "Dockerfile", Severity.HIGH),
@@ -361,6 +363,70 @@ def test_trailing_dot_is_named_in_the_reasons() -> None:
     _, reasons = ChangeClassifier().classify(ChangeType.NEW, "uploads/shell.php.")
 
     assert "Name ends with a dot or space; Windows serves it as shell.php" in reasons
+
+
+@pytest.mark.parametrize(
+    "folder",
+    ["files", "images", "img", "assets", "attachments", "storage", "cache", "downloads",
+     "public_html", "www", "wp-content", "WP-Content/uploads"],
+)
+def test_new_public_folders(folder: str) -> None:
+    assert ChangeClassifier().classify(ChangeType.NEW, f"{folder}/x.php")[0] is Severity.CRITICAL
+
+
+@pytest.mark.parametrize("name", [".htaccess", ".user.ini", "web.config", "Web.Config"])
+@pytest.mark.parametrize("change", [ChangeType.NEW, ChangeType.MODIFIED, ChangeType.DELETED])
+def test_server_control_files_in_public_folders_are_critical(name: str, change: ChangeType) -> None:
+    severity, reasons = ChangeClassifier().classify(change, f"uploads/{name}")
+
+    assert severity is Severity.CRITICAL
+    assert reasons[0].endswith(f"server configuration file {name} in the uploads/ folder")
+
+
+def test_server_control_file_in_a_root_named_uploads() -> None:
+    severity, _ = ChangeClassifier().classify(ChangeType.NEW, ".htaccess", root_name="uploads")
+
+    assert severity is Severity.CRITICAL
+
+
+@pytest.mark.parametrize(
+    "relative, root_name, severity",
+    [
+        ("shell.php", "uploads", Severity.CRITICAL),
+        ("2026/11/shell.php", "Media", Severity.CRITICAL),
+        ("photo.jpg", "uploads", Severity.LOW),
+        ("shell.php", "site", Severity.MEDIUM),
+        ("shell.php", "", Severity.MEDIUM),
+    ],
+)
+def test_root_name_counts_as_a_path_part(relative: str, root_name: str, severity: Severity) -> None:
+    assert ChangeClassifier().classify(ChangeType.NEW, relative, root_name=root_name)[0] is severity
+
+
+@pytest.fixture
+def uploads_monitor(tmp_path: Path) -> tuple:
+    folder = tmp_path / "uploads"
+    write(folder / "avatar.png", "png\n")
+    baseline = Baseline(str(folder), str(tmp_path / "integrity.db"), MemoryKeyStore())
+    baseline.create()
+    return folder, FileIntegrityMonitor(baseline, file_scanner=lambda path: [])
+
+
+def test_monitoring_uploads_directly_new_shell_is_critical(uploads_monitor: tuple) -> None:
+    folder, monitor = uploads_monitor
+    write(folder / "shell.php", marker("PHP_EVAL_SHELL"))
+
+    event = only(monitor.check())
+
+    assert event.severity is Severity.CRITICAL
+    assert "New executable file in the uploads/ folder" in event.reasons
+
+
+def test_monitoring_uploads_directly_plain_image_is_low(uploads_monitor: tuple) -> None:
+    folder, monitor = uploads_monitor
+    write(folder / "photo.jpg", "jpg\n")
+
+    assert only(monitor.check()).severity is Severity.LOW
 
 
 @pytest.mark.skipif(os.name != "nt", reason="trailing-dot names are a Windows quirk")
