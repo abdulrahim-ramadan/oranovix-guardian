@@ -163,7 +163,7 @@ class FileTree:
         return found
 
     def absolute(self, relative: str) -> str:
-        """Full path; on Windows a name ending in a dot or space needs the ``\\?\`` form to open."""
+        """Full path; on Windows a name ending in a dot or space needs the extended-length prefix."""
         parts = PurePosixPath(relative).parts
         path = os.path.join(self._root, *parts)
         if os.name == "nt" and any(p != p.rstrip(". ") for p in parts) and not path.startswith("\\\\"):
