@@ -13,7 +13,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python"/>
   <img alt="UI" src="https://img.shields.io/badge/UI-CustomTkinter-purple"/>
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green"/>
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-red"/>
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-red"/>
 </p>
 
 ---
@@ -52,8 +52,10 @@ Oranovix Guardian is a **professional desktop security scanner** that detects vu
 
 ### Download the pre-built executable (Windows)
 
-1. Download **`Oranovix_Guardian_Setup_v1.1.0.exe`** from the [Releases](../../releases) page.
+1. Download **`Oranovix_Guardian_Setup_v1.2.0.exe`** from the [Releases](../../releases) page.
 2. Run it. The app is installed to `C:\Program Files\Oranovix Guardian`; a normal (non-admin) user can run it.
+
+To update, run the new Setup over the old version. If the app is running, Setup (and the uninstaller) says "Oranovix Guardian is running, please close it" before anything is copied or removed. Your settings and data are kept: they are not in the program folder.
 
 ### Run from source
 
@@ -82,7 +84,9 @@ python main.py
 powershell -ExecutionPolicy Bypass -File src\build_tools\build.ps1
 ```
 
-The script runs PyInstaller with every flag the build needs (`--collect-all bandit --collect-all stevedore --copy-metadata bandit --hidden-import keyring.backends.Windows --hidden-import truststore --collect-data certifi`, plus the bundled assets, translations and default rules) and then Inno Setup 6. Results: `dist\Oranovix Guardian.exe` and `dist\Oranovix_Guardian_Setup_v1.1.0.exe`. Use `-NoInstaller` to build only the exe.
+The script runs PyInstaller with every flag the build needs (`--collect-all bandit --collect-all stevedore --copy-metadata bandit --hidden-import keyring.backends.Windows --hidden-import truststore --collect-data certifi`, plus the bundled assets, translations and default rules) and then Inno Setup 6. Results: the folder `dist\Oranovix Guardian\` (`Oranovix Guardian.exe` and `_internal\`) and `dist\Oranovix_Guardian_Setup_v1.2.0.exe`, which installs that whole folder. Use `-NoInstaller` to build only the folder, and `-OneFile` for a portable single `dist\Oranovix Guardian.exe` (no installer).
+
+The installer uses the one-folder build on purpose. A one-file exe runs as two processes, a bootloader without a window and the app; Restart Manager cannot close the windowless one, so an update failed with "DeleteFile failed; code 5". It also unpacks itself to `%TEMP%` at every start, which antivirus products dislike. While it runs, the app holds the mutexes `OranovixGuardianRunning` and `Global\OranovixGuardianRunning`, which Setup checks (`AppMutex`). When Windows or Restart Manager asks the app to close (`WM_CLOSE`, `WM_QUERYENDSESSION`, `WM_ENDSESSION`), it takes the same path as the close button: monitors stopped, stores written, locks released.
 
 ### App icon
 
@@ -186,7 +190,8 @@ scan checkpoints, findings and coverage. The results page and PDF
 generator use the same coverage summary.
 
 From the repository root, run tests with `python -m pytest` after
-installing `src/requirements-dev.txt`. Run the desktop workload check
+installing `src/requirements-dev.txt`. `python -m pytest -m "not slow"`
+leaves out the throughput tests, which take seconds each. Run the desktop workload check
 with `python -m src.build_tools.check_desktop_workload` in a graphical
 session. Source runs use the same runtime data paths as earlier
 checkouts. Set `ORANOVIX_DATA_DIR` to keep generated settings, databases,
