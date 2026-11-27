@@ -37,6 +37,8 @@ integrity.db
 integrity.db-journal
 feed.db
 feed.db-journal
+notify.db
+notify.db-journal
 reports/output/
 
 # ── Secrets / local config ────────────────────────────────────────────────

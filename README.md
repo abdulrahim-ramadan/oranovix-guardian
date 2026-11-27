@@ -39,6 +39,7 @@ Oranovix Guardian is a **professional desktop security scanner** that detects vu
 | 🔔 **Sound alerts** | Native Windows beep tones on scan complete/critical/error |
 | 💾 **Scan history** | SQLite-backed history with trend chart and statistics |
 | ⚡ **Fast startup** | The scanner opens first; other pages are created on demand |
+| ✉️ **Daily digest** | Optional morning report by email and/or Telegram, and instant CRITICAL alarms; off by default, nothing secret leaves the computer |
 
 ---
 
@@ -111,6 +112,7 @@ The installed app never writes into its own folder in Program Files. Everything 
     feed.db                  Threat Feed, projects, uptime history
     security_events.db       Log Sentinel events
     log_sentinel_state.db    how far each log has been read
+    notify.db                notification outbox and delivery status
     osv.db                   vulnerability database for the dependency scan
     rules\custom_rules.json  your own rules
     reports\output\          PDF reports
@@ -133,6 +135,19 @@ My Projects lists your projects with their last scan, the feed items that affect
 Log Sentinel reads the access logs of your web server (nginx, Apache, Caddy; combined, common or JSON lines) on this computer and reports attacks: SQL injection, XSS, path traversal and file inclusion, command injection, SSRF, template injection, Log4j probes, probes for sensitive files and foreign admin panels, attack tools, brute force on logins, path scans and floods. When Live Defense has found a planted file in a public folder and the log shows it being served, Log Sentinel raises one critical alarm: a web shell is probably in use. Detection only: nothing is blocked.
 
 Privacy (DSGVO): nothing from the logs leaves the computer. IP addresses are stored shortened (IPv4 /24, IPv6 /48) with a keyed hash unless you switch on "Keep full IP addresses"; credential values in URLs are hidden; events are deleted after 30 days by default. Use "Analyse a sample log" to see it work before pointing it at a real log.
+
+---
+
+## Notifications (daily report by email and Telegram)
+
+Settings → Notifications. **Off by default.** When switched on, a short report of what happened goes out every morning at the time you choose (08:00 by default): Threat Feed items that affect your projects, websites that went down or came back, Log Sentinel attacks per severity and the top rules, open Live Defense changes, and the last scan. Optionally CRITICAL alarms are pushed at once (at most 5 per hour; the rest in one message at the end of the hour). If the PC was off at report time, the missed report goes out once at the next start. A report is never sent twice on the same day.
+
+What is sent: counts, titles and CVE ids of feed items that affect a project, project names (or "Project A, B…" with *Hide project names*, then without the site host too), site hosts, rule names, relative paths of HIGH/CRITICAL file changes, and the last scan's date and counts. What is never sent: code or file contents, secret values or a secret finding's description, IP addresses (with *Include network* only the /24 or /48 network), request lines, user agents, keys or tokens, absolute paths.
+
+- **Email**: SMTP server, port (465 = TLS, 587 = STARTTLS), user, password, sender and up to 5 recipients. TLS is always used and the certificate is checked; port 25 and servers without STARTTLS are refused. For Gmail, GMX or Outlook use an app password.
+- **Telegram**: create a bot with @BotFather, send `/start` to it, paste the token and press *Find my chat*. Messages go to `api.telegram.org` only.
+
+The SMTP password and the bot token are kept in the Windows Credential Manager, never in `settings.json`, and never appear in a status line, a log or the outbox. Each channel asks before it is switched on and names the host it will contact. A message that cannot be delivered waits in the outbox (`notify.db`) and is tried again after 1, 5, 15 and 60 minutes, then hourly, for up to 48 hours. *Preview* shows the message that would be sent now; *Send test* sends a short test.
 
 ---
 

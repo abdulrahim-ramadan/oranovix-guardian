@@ -26,6 +26,32 @@ Known limits:
 - The window procedure hook is Windows only and is installed after the first page is shown. A logoff during the splash phase only gets the Tk protocols.
 - A logoff waits at most 5 s; a monitor still busy after that is cut off by Windows, as before.
 
+### Phase 2: daily digest by email and Telegram (branch `feature/notifications`, on top of phase 1)
+
+Goal: every morning a short report of what happened, by email and/or Telegram, and optionally CRITICAL alarms at once. Off by default, minimal data, nothing secret leaves the machine.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `DailyReport.build` (pure, clock and period passed in) from a `ReportState` the collector read locally: Threat Feed counts via `DigestBuilder`, titles/CVE ids/projects of items that affect a project; sites down or back up (host only); Log Sentinel hits per severity and top rules, no address (with "include network" the /24 or /48); Live Defense counts and relative paths of HIGH/CRITICAL events (absolute or `..` paths are cut to the file name); last scan date, project and counts. "Hide project names" gives Project A, B, C… with the mapping in `settings.json`, and then also drops the site host, which would name the project. | `notify/report.py`, `notify/collect.py`, `log_sentinel/store.py` (`events_since`), `core/scan_history.py` (`last_scan`) |
+| 2 | `ReportRenderer`: plain text, Telegram HTML (`<b> <i> <code> <a>`, `html.escape` on every value, no tag across two lines) and an email part with `dir="rtl"` for Arabic; texts in the UI language. | `notify/render.py` |
+| 3 | `EmailNotifier`: `EmailMessage` with text and HTML parts; 465 implicit TLS, other ports STARTTLS before the login, port 25 and servers without STARTTLS refused; `TlsTrust.context()` as for the feed. CR/LF in an address or the subject is refused before anything is built; addresses checked with `parseaddr` and a shape check; at most 5 recipients. | `notify/mail.py` |
+| 4 | `TelegramNotifier`: `sendMessage` as JSON POST through `HttpFetcher` (`public_only`, checked redirects, TLS), new `HttpFetcher.post`, which keeps the error body so Telegram's reason can be shown. Split at 4096 characters between lines. Token shape `digits:35 characters` checked before saving and before sending. "Find my chat" calls `getUpdates` once and keeps only chat ids and names. `safe_error_text` removes the token, its secret half, any `bot<id>:<secret>` and every URL from each error text. | `notify/telegram.py`, `notify/redaction.py`, `threat_intel/fetcher.py` |
+| 5 | Outbox (`notify.db`): retry after 1, 5, 15, 60 min, then hourly; dropped after 48 h with a visible status; permanent errors (refused login, unknown chat) are not retried; dedup by message id; last report date and time per channel. | `notify/outbox.py` |
+| 6 | Scheduler on a `Monitor` thread (`NotificationMonitor`, 30 s, woken at once by an instant alarm): report at the chosen local time once per day and channel; at the first tick after a start, a missed previous day is sent when the last report is more than 20 h old; wall-clock comparison, so 08:00 stays 08:00 across the change to and from summer time, a time inside the skipped spring hour goes out at 03:00, the repeated autumn hour sends once. Off: nothing is built, queued or sent. | `notify/scheduler.py` |
+| 7 | `NotifyChannel(AlarmChannel)`: CRITICAL only, at most 5 per hour and channel, the rest folded into one message after the hour; message id from the alarm's finding ids, so the same alarm is never pushed twice. The text is built from the rule name and file name; addresses and URLs are scrubbed (Log Sentinel titles carry the address). | `notify/alarms.py` |
+| 8 | Settings → Notifications: master switch, daily time, instant alerts, hide names, include network; email and Telegram fields, Send test, last delivery status, Preview. Consent per channel names the host, what is sent and what never is; a changed SMTP server asks again; "Find my chat" asks first, as it contacts Telegram. Password and token in the credential store. The app owns the service, adds its alarm channel and stops it on close. All texts EN/DE/AR. | `gui/notify_panel.py`, `gui/notify_dialogs.py`, `gui/pages/settings_page.py`, `gui/app.py`, `translations/*.json` |
+
+Tests: 2379 passing, 7 skipped, 1 failing (116 new in `tests/test_notify_*.py`; helpers in `tests/notify_fakes.py`, `FakeFetcher.post` added). `-m "not slow"`: 2378 passing. Type check: `uvx pyright`, 0 errors. The failure is the same `test_fifty_thousand_addresses_through_the_monitor` under load as in phase 1 (this run took 205 s against 53 s for the baseline). No test opens a connection: a recording SMTP class replaces `smtplib.SMTP`/`SMTP_SSL`, Telegram goes through `FakeFetcher`, and the "off" tests run with the `no_network` fixture. Tokens and passwords in tests are built at runtime. The time zone tests use a small Europe/Berlin `tzinfo` in the test helpers (EU rule), because Windows Python has no tz database without `tzdata`.
+
+Checked by hand: the panel in a window in EN and AR (screenshots), and a preview built by the real collector from empty stores.
+
+Known limits:
+
+- Telegram messages are split between lines; a single line longer than 4096 characters (not produced by the report) is cut inside.
+- The fold-up hour is the local clock hour; on the night the clock goes back, the two 02:00 hours share one count.
+- Arabic labels in the settings panel have the same word-order problem as the rest of the Tk UI (no bidi in Tk); the email part is right-to-left, Telegram orders Arabic itself.
+- The tests for the monitor thread and the app wiring were written after that code (coverage), not before it.
+
 ## Follow-up after the audit review (main @ b33892f)
 
 Baseline: 2055 passing, 6 skipped, 1 failing. The failing test is `test_hundred_thousand_lines_in_under_five_seconds` (Log Sentinel throughput). It took 5.6 s against a 5.0 s limit on unchanged main while the machine was busy, and the whole suite took 97 s instead of the usual 50 s. It is a timing test, not a functional failure, and it was left as it is. Pyright: 12 errors in `assets/icon_generator.py` and `tests/test_window_and_icon.py` from `fix/window-and-icon`. They were fixed first (type annotations only, the generated icons are byte-identical).
