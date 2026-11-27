@@ -11,7 +11,7 @@ module are both supported; the ``if __name__ == "__main__"`` guard
 prevents unintended execution when the module is imported by tests or
 other tooling.
 
-Version: 1.2.0
+Version: 1.1.0
 """
 from __future__ import annotations
 

@@ -40,6 +40,7 @@ from oranovix_guardian.scanner_engine.deps.osv_db import OSVDatabase, OSVUpdateE
 from oranovix_guardian.scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
 from oranovix_guardian.scanner_engine.rule_engine import RuleEngine, Rule, RuleLanguage, RulePatternError
 from oranovix_guardian.core.settings_file import SettingsFile
+from oranovix_guardian.core.version import APP_VERSION
 from oranovix_guardian.reports.pdf_generator import SHOW_SECRETS_SETTING
 
 if TYPE_CHECKING:
@@ -425,7 +426,7 @@ class SettingsPage(ctk.CTkFrame):
         # Each tuple: (text, font_size, weight, theme_color_key)
         about_lines: list[tuple[str, int, Literal["normal", "bold"], str]] = [
             ("Oranovix Guardian", 14, "bold", "text"),
-            ("Professional Security Scanner  •  v1.0.0", 11, "normal", "text2"),
+            (f"Professional Security Scanner  •  v{APP_VERSION}", 11, "normal", "text2"),
             ("100% free — powered by Bandit, Gemini & ReportLab", 10, "normal", "text3"),
         ]
         for line in about_lines:

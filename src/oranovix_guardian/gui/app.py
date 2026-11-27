@@ -19,7 +19,7 @@ the theme (:mod:`gui.window_frame`). Closing the window runs
 or Restart Manager (Setup): ``WM_CLOSE``, ``WM_QUERYENDSESSION`` and
 ``WM_ENDSESSION`` (:mod:`gui.session_end`).
 
-Version: 1.2.0
+Version: 1.1.0
 """
 from __future__ import annotations
 
