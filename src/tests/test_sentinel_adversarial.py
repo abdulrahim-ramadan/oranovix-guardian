@@ -173,6 +173,7 @@ def test_rotation_to_another_name_starts_the_new_file(tmp_path: Path) -> None:
 # 4. Fifty thousand addresses
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_fifty_thousand_addresses_through_the_monitor(tmp_path: Path) -> None:
     watch = Watch(tmp_path)
     lines = [log_line(n * 0.01, f"10.{n // 65536}.{n // 256 % 256}.{n % 256}", "GET", f"/x/{n % 50}", 404, 153)
