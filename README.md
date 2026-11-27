@@ -34,11 +34,11 @@ Oranovix Guardian is a **professional desktop security scanner** that detects vu
 | 📊 **Risk scoring** | 0–100 composite score; CRITICAL / HIGH / MEDIUM / LOW breakdown |
 | 📄 **PDF reports** | Professional ReportLab-generated reports with full issue table |
 | 🤖 **AI analysis** | Optional Gemini integration for natural-language remediation advice |
-| 🌍 **10 languages** | EN, DE, FR, ES, AR, ZH, JA, RU, PT, IT (with RTL support for Arabic) |
+| 🌍 **Languages** | English, German and Arabic, with RTL support for Arabic |
 | 🎨 **Dark & Light theme** | Fully themeable CustomTkinter UI |
 | 🔔 **Sound alerts** | Native Windows beep tones on scan complete/critical/error |
 | 💾 **Scan history** | SQLite-backed history with trend chart and statistics |
-| ⚡ **Fast startup** | Splash screen in < 0.2 s; heavy imports deferred to background thread |
+| ⚡ **Fast startup** | The scanner opens first; other pages are created on demand |
 
 ---
 
@@ -79,7 +79,7 @@ python main.py
 ## Build the Executable
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File build_tools\build.ps1
+powershell -ExecutionPolicy Bypass -File src\build_tools\build.ps1
 ```
 
 The script runs PyInstaller with every flag the build needs (`--collect-all bandit --collect-all stevedore --copy-metadata bandit --hidden-import keyring.backends.Windows --hidden-import truststore --collect-data certifi`, plus the bundled assets, translations and default rules) and then Inno Setup 6. Results: `dist\Oranovix Guardian.exe` and `dist\Oranovix_Guardian_Setup_v1.1.0.exe`. Use `-NoInstaller` to build only the exe.
@@ -158,32 +158,39 @@ Privacy (DSGVO): nothing from the logs leaves the computer. IP addresses are sto
 
 ## Project Structure
 
-```
+```text
 oranovix-guardian/
-├── main.py                    # Entry point
-├── scanner_engine/            # Language scanners + AI analyzer
-│   ├── base.py                # Abstract BaseScanner, Issue, ScanResult
-│   ├── factory.py             # ScannerFactory (auto-detects language)
-│   ├── python_scanner.py      # Bandit wrapper + regex extras
-│   ├── js_scanner.py          # JS/TS regex scanner
-│   ├── php_scanner.py         # PHP regex scanner
-│   ├── java_scanner.py        # Java regex scanner
-│   ├── csharp_scanner.py      # C# regex scanner
-│   ├── ai_analyzer.py         # Gemini API integration
-│   └── vulnerability_db.py    # CWE/OWASP education database
-├── core/                      # Application services
-│   ├── language_manager.py    # i18n (10 languages, RTL)
-│   ├── scan_history.py        # SQLite scan history
-│   └── sound_manager.py       # Windows sound alerts
-├── gui/                       # CustomTkinter UI
-│   ├── app.py                 # Root window + navigation
-│   ├── pages/                 # Scanner, Results, Reports, Settings
-│   └── ...                    # Sidebar, title bar, animations
-├── reports/
-│   └── pdf_generator.py       # ReportLab PDF export
-├── translations/              # JSON translation files
-└── assets/                    # Icons and images
+├── .github/                     # CI workflows
+├── assets/                      # Icons, artwork and the sample access log
+├── main.py                      # Source and desktop bundle entry point
+└── src/
+    ├── oranovix_guardian/
+    │   ├── core/                # Application services and persistence
+    │   ├── gui/                 # Tk views, navigation and scan activity
+    │   ├── scanner_engine/      # Scan orchestration, rules and findings
+    │   ├── live_defense/        # File integrity monitoring
+    │   ├── log_sentinel/        # Access-log analysis and monitoring
+    │   ├── threat_intel/        # Projects, uptime checks and threat feeds
+    │   ├── reports/             # PDF generation
+    │   ├── rules/               # Bundled default scan rules
+    │   └── translations/        # English, German and Arabic
+    ├── build_tools/             # Packaging and desktop workload checks
+    ├── docs/                    # Development notes and examples
+    └── tests/                   # Functional tests and fixtures
 ```
+
+The scan workflow goes from `oranovix_guardian.gui` to `core.scan_job`
+to `scanner_engine` within the application package. The job owns
+background execution, progress and cancellation. The engine owns the
+scan checkpoints, findings and coverage. The results page and PDF
+generator use the same coverage summary.
+
+From the repository root, run tests with `python -m pytest` after
+installing `src/requirements-dev.txt`. Run the desktop workload check
+with `python -m src.build_tools.check_desktop_workload` in a graphical
+session. Source runs use the same runtime data paths as earlier
+checkouts. Set `ORANOVIX_DATA_DIR` to keep generated settings, databases,
+custom rules and reports in a separate folder.
 
 ---
 

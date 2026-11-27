@@ -1,6 +1,7 @@
 {
-  "include": ["main.py", "assets", "core", "gui", "live_defense", "log_sentinel", "reports", "scanner_engine", "tests", "threat_intel"],
-  "exclude": ["tests/corpus", "venv", "build", "dist", "release", "**/__pycache__"],
+  "include": ["main.py", "assets", "src/oranovix_guardian", "src/tests"],
+  "exclude": ["src/tests/corpus", "venv", "build", "dist", "release", "**/__pycache__"],
+  "extraPaths": ["src"],
   "venvPath": ".",
   "venv": "venv"
 }

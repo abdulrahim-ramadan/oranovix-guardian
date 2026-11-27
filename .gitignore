@@ -30,6 +30,7 @@ scan_history.db
 scan_history.db-shm
 scan_history.db-wal
 settings.json
+/rules/custom_rules.json
 osv.db
 osv.db.new
 integrity.db
@@ -65,12 +66,11 @@ htmlcov/
 *.log
 
 # Generated PDF reports
-reports/output/
 *security_report*.pdf
 
 # ── Test corpus (intentionally vulnerable fixtures, must stay tracked) ────
-!tests/corpus/**
-tests/corpus/**/__pycache__/
+!src/tests/corpus/**
+src/tests/corpus/**/__pycache__/
 
 # Log Sentinel
 security_events.db

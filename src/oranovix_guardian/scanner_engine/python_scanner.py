@@ -1,0 +1,568 @@
+"""
+Python security scanner: Bandit (run as a library) plus AST, regex and
+Django checks.
+
+Bandit findings are mapped to ``Issue`` objects with an escalation table
+that promotes selected test IDs to CRITICAL or HIGH.  If Bandit cannot
+run, the scan continues with the other checks and records a visible
+entry in ``ScanResult.engine_warnings``.
+"""
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+from .bandit_runner import BanditFinding, BanditRunner, BanditUnavailableError
+from .secret_heuristics import SecretHeuristics
+from .categories import IssueCategory, category_for_rule
+from .base import (
+    BaseScanner,
+    Issue,
+    Language,
+    ScanResult,
+    Severity,
+)
+
+
+# ---------------------------------------------------------------------------
+# Severity mapping
+# ---------------------------------------------------------------------------
+
+# Direct translation from Bandit's severity strings to internal Severity enum values.
+# Bandit does not emit a CRITICAL level, so we handle escalation separately below.
+_BANDIT_SEVERITY_MAP: dict[str, Severity] = {
+    "LOW": Severity.LOW,
+    "MEDIUM": Severity.MEDIUM,
+    "HIGH": Severity.HIGH,
+}
+
+# Maps Bandit's confidence strings to numeric weights (currently kept for
+# potential future use in confidence-weighted scoring).
+_BANDIT_CONFIDENCE_MAP: dict[str, int] = {
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+}
+
+# Bandit test IDs that represent truly critical vulnerabilities regardless of
+# what Bandit labels them (Bandit tops out at HIGH, but these patterns are
+# effectively CRITICAL in any real application).
+_ESCALATE_TO_CRITICAL: set[str] = {
+    "B102",  # exec()
+    "B307",  # eval()
+    "B501",  # SSL cert not verified
+    "B602",  # subprocess shell=True
+    "B605",  # os.system / start_process_with_shell
+    "B606",  # os.startfile
+    "B608",  # SQL injection via string formatting
+}
+
+# exec()/eval() are CRITICAL only when the code is not a constant string;
+# eval("1 + 1") is MEDIUM, like the AST rule.
+_CRITICAL_UNLESS_CONSTANT: set[str] = {"B102", "B307"}
+
+# Shell commands (B605: os.system, os.popen...) are CRITICAL only when the
+# command is built at runtime; a fixed string such as
+# os.system("defaults write -g ...") cannot be changed by an attacker: MEDIUM.
+_SHELL_UNLESS_CONSTANT: set[str] = {"B605"}
+_SHELL_FUNCTIONS: frozenset = frozenset({
+    "system", "popen", "popen2", "popen3", "popen4", "getoutput", "getstatusoutput",
+})
+
+# Hardcoded password findings are promoted only when Bandit is not unsure
+# and the name and value look like a real secret (SecretHeuristics).
+_SECRET_TESTS: set[str] = {"B105", "B106", "B107"}
+
+# Subprocess findings are promoted only when the command is not a literal:
+# subprocess.run(["ls", "-l"]) is fixed in the source.
+_COMMAND_TESTS: set[str] = {"B603", "B607"}
+
+# Bandit test IDs that should be promoted to HIGH severity to reflect their
+# real-world exploitability even when Bandit assigns MEDIUM.
+_ESCALATE_TO_HIGH: set[str] = {
+    "B103",  # chmod permissive
+    "B105",  # hardcoded password (variable)
+    "B106",  # hardcoded password (arg)
+    "B107",  # hardcoded password (default)
+    "B324",  # weak hash (md5/sha1)
+    "B603",  # subprocess without shell (still needs validation)
+    "B607",  # partial path in subprocess
+}
+
+# Bandit names many checks after its internal plugin ("blacklist", "hashlib",
+# "yaml_load"), which says nothing to a reader.  These titles replace them.
+_BANDIT_TITLES: dict[str, str] = {
+    "B101": "assert used outside tests",
+    "B102": "Use of exec()",
+    "B103": "Permissive file permissions",
+    "B104": "Binding to all network interfaces",
+    "B105": "Hardcoded password",
+    "B106": "Hardcoded password in function argument",
+    "B107": "Hardcoded password as default argument",
+    "B108": "Insecure temporary file path",
+    "B110": "Exception silently ignored (try/except/pass)",
+    "B112": "Exception silently ignored (try/except/continue)",
+    "B113": "HTTP request without timeout",
+    "B201": "Flask debug mode enabled",
+    "B301": "Unsafe pickle deserialization",
+    "B302": "Unsafe marshal deserialization",
+    "B303": "Weak hash function",
+    "B304": "Insecure cipher",
+    "B305": "Insecure cipher mode",
+    "B306": "Insecure tempfile.mktemp()",
+    "B307": "Use of eval()",
+    "B308": "mark_safe() may enable XSS",
+    "B310": "URL opened without scheme check",
+    "B311": "Non-cryptographic random generator",
+    "B312": "Use of telnetlib (unencrypted)",
+    "B313": "Unsafe XML parsing", "B314": "Unsafe XML parsing",
+    "B315": "Unsafe XML parsing", "B316": "Unsafe XML parsing",
+    "B317": "Unsafe XML parsing", "B318": "Unsafe XML parsing",
+    "B319": "Unsafe XML parsing", "B320": "Unsafe XML parsing",
+    "B321": "Use of FTP (unencrypted)",
+    "B323": "Unverified SSL context",
+    "B324": "Weak hash function",
+    "B401": "Import of telnetlib",
+    "B402": "Import of ftplib",
+    "B403": "Import of pickle",
+    "B404": "Import of subprocess",
+    "B405": "Import of unsafe XML parser", "B406": "Import of unsafe XML parser",
+    "B407": "Import of unsafe XML parser", "B408": "Import of unsafe XML parser",
+    "B409": "Import of unsafe XML parser", "B410": "Import of unsafe XML parser",
+    "B411": "Import of xmlrpc",
+    "B413": "Import of pycrypto (unmaintained)",
+    "B501": "TLS certificate verification disabled",
+    "B502": "Insecure SSL/TLS protocol version",
+    "B503": "Insecure SSL/TLS default protocol",
+    "B504": "SSL used without protocol version",
+    "B505": "Weak cryptographic key size",
+    "B506": "Unsafe yaml.load()",
+    "B507": "SSH host key not verified",
+    "B601": "Shell command through paramiko",
+    "B602": "subprocess call with shell=True",
+    "B603": "subprocess call with unchecked input",
+    "B604": "Function call with shell=True",
+    "B605": "Shell command execution",
+    "B606": "Process started without a shell",
+    "B607": "Process started with a partial path",
+    "B608": "SQL built from strings",
+    "B609": "Wildcard injection in shell command",
+    "B610": "SQL injection via Django extra()",
+    "B611": "SQL injection via Django RawSQL",
+    "B701": "Jinja2 autoescape disabled",
+    "B702": "Mako template without escaping",
+    "B703": "Django mark_safe() may enable XSS",
+}
+
+# ---------------------------------------------------------------------------
+# Extra regex checks (supplement Bandit)
+# ---------------------------------------------------------------------------
+
+# Matches variable assignments where the variable name strongly suggests it
+# holds a secret credential (API key, password, token, etc.) and the value is
+# a non-empty string literal of at least 4 characters.
+# Named groups:  var = the suspicious variable name, val = the literal value.
+_BANDIT_PASSWORD_TEXT = re.compile(r"hardcoded password: '(?P<value>.*)'\s*$", re.IGNORECASE | re.DOTALL)
+_SUBPROCESS_FUNCTIONS = frozenset({
+    "run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput",
+})
+
+_SECRET_NAME_RE = re.compile(
+    r'(?i)^[ \t]*(?:self\.)?(?:\w+\.)?'
+    r'(?P<var>api[_-]?key|secret[_-]?key|secret|token|password|passwd|pwd|'
+    r'auth[_-]?token|access[_-]?token|private[_-]?key|api[_-]?secret)'
+    r'\s*=\s*(?:f?["\'])(?P<val>[^"\']{4,})["\']',
+    re.MULTILINE,
+)
+
+
+class BanditSeverityPolicy:
+    """Final severity of a Bandit finding.
+
+    Bandit tops out at HIGH and does not know the difference between
+    ``eval(user_input)`` and ``eval("1 + 1")``, or between a password and a
+    form field called ``PASSWORD_FIELD``. This policy looks at the flagged
+    call or assignment in the file before promoting a finding.
+    """
+
+    def __init__(self) -> None:
+        self._sources: Dict[str, Tuple[List[str], Optional[ast.AST]]] = {}
+
+    def severity(self, finding: BanditFinding) -> Severity:
+        own = _BANDIT_SEVERITY_MAP.get(finding.severity, Severity.LOW)
+        test_id = finding.test_id
+        unsure = finding.confidence.upper() == "LOW"
+
+        if test_id in _CRITICAL_UNLESS_CONSTANT:
+            call = self._call_at(finding, lambda name: name in ("eval", "exec"))
+            if call is not None and self._constant_code(call):
+                return Severity.MEDIUM
+            return Severity.CRITICAL
+        if test_id in _SHELL_UNLESS_CONSTANT:
+            call = self._call_at(finding, lambda name: name in _SHELL_FUNCTIONS)
+            if call is not None and self._constant_code(call):
+                return Severity.MEDIUM
+            return Severity.CRITICAL
+        if test_id in _ESCALATE_TO_CRITICAL:
+            return Severity.CRITICAL
+        if test_id in _SECRET_TESTS:
+            if unsure or not self._looks_like_secret(finding):
+                return own
+            return Severity.HIGH
+        if test_id in _COMMAND_TESTS:
+            if unsure:
+                return own
+            call = self._call_at(finding, lambda name: name in _SUBPROCESS_FUNCTIONS or name in _SHELL_FUNCTIONS)
+            if call is not None and self._literal_command(call):
+                return own
+            return Severity.HIGH
+        if test_id in _ESCALATE_TO_HIGH:
+            return Severity.HIGH
+        return own
+
+    # ------------------------------------------------------------------
+    # Hardcoded passwords
+    # ------------------------------------------------------------------
+
+    def _looks_like_secret(self, finding: BanditFinding) -> bool:
+        match = _BANDIT_PASSWORD_TEXT.search(finding.text)
+        if match is None:
+            return True                     # unknown wording: keep Bandit's judgement
+        value = match.group("value")
+        line = finding.code or self._line(finding)
+        return SecretHeuristics.is_secret(self._name_before(line, value), value)
+
+    @staticmethod
+    def _name_before(line: str, value: str) -> str:
+        """The identifier or dict key the value is assigned or compared to."""
+        literal = r"[rbuRBU]{0,2}(?:'" + re.escape(value) + r"'|\"" + re.escape(value) + r"\")"
+        pattern = r"([A-Za-z_][\w.]*)['\"]?\s*(?:==|!=|=|:)\s*" + literal
+        found = re.search(pattern, line)
+        if found:
+            return found.group(1)
+        names = re.findall(r"[A-Za-z_]\w*", line.split(value, 1)[0])
+        return names[-1] if names else ""
+
+    # ------------------------------------------------------------------
+    # Calls
+    # ------------------------------------------------------------------
+
+    def _call_at(self, finding: BanditFinding, wanted) -> Optional[ast.Call]:
+        _, tree = self._source(finding.file_path)
+        if tree is None:
+            return None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            first, last = node.lineno, getattr(node, "end_lineno", None) or node.lineno
+            if not first <= finding.line_number <= last:
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            if wanted(name):
+                return node
+        return None
+
+    @staticmethod
+    def _constant_code(call: ast.Call) -> bool:
+        source = call.args[0] if call.args else None
+        return isinstance(source, ast.Constant) and isinstance(source.value, (str, bytes))
+
+    @staticmethod
+    def _literal_command(call: ast.Call) -> bool:
+        command = call.args[0] if call.args else next(
+            (k.value for k in call.keywords if k.arg == "args"), None
+        )
+        if isinstance(command, ast.Constant):
+            return isinstance(command.value, (str, bytes))
+        if isinstance(command, (ast.List, ast.Tuple)):
+            return all(
+                isinstance(part, ast.Constant) and isinstance(part.value, (str, bytes))
+                for part in command.elts
+            )
+        return False
+
+    # ------------------------------------------------------------------
+    # Source cache
+    # ------------------------------------------------------------------
+
+    def _source(self, path: str) -> Tuple[List[str], Optional[ast.AST]]:
+        cached = self._sources.get(path)
+        if cached is None:
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                cached = ([], None)
+            else:
+                try:
+                    tree: Optional[ast.AST] = ast.parse(text)
+                except (SyntaxError, ValueError, RecursionError, MemoryError):
+                    tree = None
+                cached = (text.splitlines(), tree)
+            self._sources[path] = cached
+        return cached
+
+    def _line(self, finding: BanditFinding) -> str:
+        lines, _ = self._source(finding.file_path)
+        index = finding.line_number - 1
+        return lines[index] if 0 <= index < len(lines) else ""
+
+
+class PythonScanner(BaseScanner):
+    """Scanner for Python source files that combines Bandit with custom regex rules.
+
+    ``PythonScanner`` is the concrete ``BaseScanner`` implementation for Python.
+    Bandit runs in-process through ``BanditRunner``; AST rules and regex
+    checks cover what Bandit misses.
+    """
+
+    SUPPORTED_EXTENSIONS: List[str] = [".py"]
+
+    def __init__(self, bandit_runner: Optional[BanditRunner] = None) -> None:
+        super().__init__(name="Python (Bandit)", supported_language=Language.PYTHON)
+        self._bandit_runner = bandit_runner or BanditRunner()
+
+    # ------------------------------------------------------------------
+    # BaseScanner contract
+    # ------------------------------------------------------------------
+
+    def supports(self, file_path: str) -> bool:
+        """Return ``True`` if *file_path* has a ``.py`` extension.
+
+        Args:
+            file_path: Path to the file being evaluated.
+
+        Returns:
+            ``True`` for ``.py`` files, ``False`` for all other extensions.
+        """
+        return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
+
+    def _do_scan(self, target: str, result: ScanResult) -> ScanResult:
+        """Run Bandit, the regex checks, the AST rules and the Django rules."""
+        from .ast_analyzer import ASTAnalyzer
+        from .django_rules import DjangoAnalyzer
+        from .django_settings_rules import DjangoSettingsAnalyzer
+
+        files = self.collect_files(target, self.SUPPORTED_EXTENSIONS)
+        result.files_scanned = len(files)
+        files = self.within_size_limit(files, result)
+        if not files:
+            return result
+
+        result.issues.extend(self._run_bandit(files, result))
+
+        seen: set = {
+            (i.rule_id, i.file_path, i.line_number) for i in result.issues
+        }
+
+        # Each file, and each analyzer on it, runs on its own: a file that
+        # breaks one analyzer (e.g. RecursionError on a 100,000-term
+        # expression) is reported and every other check still runs.
+        analyzers = (
+            ("AST rules", ASTAnalyzer.analyze),
+            ("Django rules", DjangoAnalyzer.analyze),
+            ("Django settings rules", DjangoSettingsAnalyzer.analyze),
+        )
+        for file_path in files:
+            try:
+                code = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+            except OSError as exc:
+                self.not_analysed(result, file_path, f"unreadable: {exc.strerror or exc}")
+                continue
+            found = self.isolated(
+                result, file_path, lambda p=file_path, c=code: self._extra_checks_in(p, c), "regex checks"
+            )
+            for what, analyze in analyzers:
+                found += self.isolated(
+                    result, file_path, lambda a=analyze, p=file_path, c=code: a(c, p), what
+                )
+            for issue in found:
+                key = (issue.rule_id, issue.file_path, issue.line_number)
+                if key not in seen:
+                    result.issues.append(issue)
+                    seen.add(key)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Bandit
+    # ------------------------------------------------------------------
+
+    def _run_bandit(self, files: List[str], result: ScanResult) -> List[Issue]:
+        """Run Bandit on *files*; record a warning instead of failing silently."""
+        try:
+            report = self._bandit_runner.run(files)
+        except BanditUnavailableError as exc:
+            result.failed_files.update(files)
+            result.engine_warnings.append(
+                f"Bandit could not run ({exc}). Python results are incomplete: "
+                "only the built-in AST and regex checks were applied."
+            )
+            return []
+
+        if report.skipped_files:
+            result.failed_files.update(report.skipped_files)
+            names = ", ".join(Path(f).name for f in report.skipped_files[:5])
+            result.engine_warnings.append(
+                f"Bandit could not parse {len(report.skipped_files)} file(s): {names}"
+            )
+        policy = BanditSeverityPolicy()
+        return [self._issue_from_finding(finding, policy) for finding in report.findings]
+
+    def _issue_from_finding(
+        self, finding: BanditFinding, policy: Optional[BanditSeverityPolicy] = None
+    ) -> Issue:
+        severity = (policy or BanditSeverityPolicy()).severity(finding)
+
+        return Issue(
+            rule_id=finding.test_id,
+            title=self._title_for(finding),
+            description=finding.text,
+            severity=severity,
+            file_path=finding.file_path,
+            line_number=finding.line_number,
+            code_snippet=finding.code,
+            recommendation=self._build_recommendation(finding.test_id),
+            cwe=finding.cwe_link,
+            confidence=finding.confidence,
+            category=category_for_rule(finding.test_id),
+        )
+
+    def _extra_checks(self, file_path: str) -> List[Issue]:
+        """Regex check for hardcoded credentials (SEC001).
+
+        The former SEC002 open() path-traversal regex is disabled: it could
+        not tell user input from safe paths.  It will return as a taint rule.
+        """
+        try:
+            source = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            # File unreadable (permission error, deleted, etc.) – skip silently
+            return []
+        return self._extra_checks_in(file_path, source)
+
+    def _extra_checks_in(self, file_path: str, source: str) -> List[Issue]:
+        """``_extra_checks`` on text already read."""
+        extra: List[Issue] = []
+        lines = source.splitlines()
+
+        # ── Hardcoded secrets ──────────────────────────────────────────
+        for m in _SECRET_NAME_RE.finditer(source):
+            var_name = m.group("var")
+            if not SecretHeuristics.is_secret(var_name, m.group("val")):
+                continue                    # token = "test", password = "changeme"
+            # Compute the 1-based line number by counting preceding newlines
+            line_num = source[: m.start()].count("\n") + 1
+            snippet = lines[line_num - 1].strip() if line_num <= len(lines) else ""
+            extra.append(Issue(
+                rule_id="SEC001",
+                title="Hardcoded Secret / API Key",
+                description=(
+                    f"Hardcoded credential found in variable '{var_name}'. "
+                    "Secrets committed to source code can be extracted from "
+                    "version control, compiled binaries, or process memory."
+                ),
+                severity=Severity.CRITICAL,
+                file_path=file_path,
+                line_number=line_num,
+                code_snippet=snippet,
+                recommendation=(
+                    "Store secrets in environment variables or a secrets manager "
+                    "(e.g. python-decouple, AWS Secrets Manager, HashiCorp Vault). "
+                    "Rotate any key that has been committed to version control."
+                ),
+                cwe="https://cwe.mitre.org/data/definitions/798.html",
+                confidence="HIGH",
+                category=IssueCategory.SECRET,
+            ))
+
+        return extra
+
+    @staticmethod
+    def _title_for(finding: BanditFinding) -> str:
+        """Readable title for a Bandit finding; falls back to its test name."""
+        return _BANDIT_TITLES.get(
+            finding.test_id, finding.test_name.replace("_", " ").title()
+        )
+
+    @staticmethod
+    def _build_recommendation(test_id: str) -> str:
+        """Return remediation advice for a Bandit test ID."""
+        recommendations: dict[str, str] = {
+            "B101": "Remove assert statements in production code or use proper error handling.",
+            "B102": "Avoid exec() — use safer alternatives like ast.literal_eval().",
+            "B103": "Set restrictive file permissions (e.g. chmod 600).",
+            "B104": "Bind to a specific IP address instead of 0.0.0.0.",
+            "B105": "Avoid hardcoding passwords. Use environment variables or a secrets manager.",
+            "B106": "Avoid hardcoding passwords. Use environment variables or a secrets manager.",
+            "B107": "Avoid hardcoding passwords. Use environment variables or a secrets manager.",
+            "B108": "Use a secure temp directory via tempfile.mkstemp().",
+            "B110": "Avoid bare except clauses that silently swallow exceptions.",
+            "B112": "Avoid bare except clauses that silently swallow exceptions.",
+            "B201": "Never use debug mode (debug=True) in production Flask apps.",
+            "B202": "Disable Flask debug mode in production.",
+            "B301": "Avoid pickle / cPickle — use JSON or another safe format.",
+            "B302": "Avoid marshal — use JSON or another safe format.",
+            "B303": "Use SHA-256 or stronger instead of MD5/SHA1.",
+            "B304": "Use SHA-256 or stronger instead of MD5/SHA1.",
+            "B305": "Use SHA-256 or stronger cipher algorithms.",
+            "B306": "Use tempfile.mkstemp() instead of tempfile.mktemp().",
+            "B307": "Avoid eval() — use ast.literal_eval() for safe expression parsing.",
+            "B308": "Avoid mark_safe() with user-supplied data to prevent XSS.",
+            "B310": "Validate URL schemes before passing to urllib.urlopen().",
+            "B311": "Use secrets module for cryptographic operations, not random.",
+            "B312": "Avoid telnetlib — use Paramiko/SSH for encrypted connections.",
+            "B313": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B314": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B315": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B316": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B317": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B318": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B319": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B320": "Use defusedxml to parse XML and prevent XXE attacks.",
+            "B321": "Avoid FTP — use SFTP/FTPS for encrypted file transfer.",
+            "B322": "Use input() instead of raw_input() (Python 2 only).",
+            "B323": "Validate SSL/TLS certificates in production.",
+            "B324": "Use SHA-256 or stronger hash functions.",
+            "B325": "Use tempfile.mkstemp() instead of tempfile.mktemp().",
+            "B401": "Avoid importing insecure modules.",
+            "B402": "Avoid importing insecure modules.",
+            "B403": "Be cautious with pickle imports; validate all deserialized data.",
+            "B404": "Validate all input passed to subprocess calls.",
+            "B405": "Use defusedxml instead of lxml for untrusted XML.",
+            "B406": "Use defusedxml instead of xmltodict for untrusted XML.",
+            "B407": "Use defusedxml instead of xmltodict for untrusted XML.",
+            "B408": "Use defusedxml instead of xmltodict for untrusted XML.",
+            "B409": "Use defusedxml instead of xmltodict for untrusted XML.",
+            "B410": "Use defusedxml to parse untrusted XML.",
+            "B411": "Avoid xmlrpc with untrusted data.",
+            "B412": "Avoid httpoxy vulnerability — check PROXY env vars.",
+            "B413": "Use cryptography library instead of pycrypto.",
+            "B501": "Enable SSL/TLS certificate verification.",
+            "B502": "Avoid deprecated SSL/TLS protocol versions.",
+            "B503": "Avoid deprecated SSL/TLS protocol versions.",
+            "B504": "Avoid deprecated SSL/TLS protocol versions.",
+            "B505": "Use keys of at least 2048 bits for RSA/DSA.",
+            "B506": "Use yaml.safe_load() instead of yaml.load().",
+            "B507": "Enable SSH host key verification.",
+            "B601": "Validate all input passed to paramiko exec_command().",
+            "B602": "Avoid shell=True in subprocess calls with user input.",
+            "B603": "Validate all input passed to subprocess calls.",
+            "B604": "Validate all input in function calls with shell=True.",
+            "B605": "Avoid os.system() — use subprocess with explicit args.",
+            "B606": "Avoid os.startfile() with untrusted paths.",
+            "B607": "Provide full paths to subprocess executables.",
+            "B608": "Use parameterized queries to prevent SQL injection.",
+            "B609": "Validate wildcard characters in Linux commands.",
+            "B610": "Use Django's ORM instead of extra() with user input.",
+            "B611": "Use Django's ORM instead of RawSQL with user input.",
+            "B701": "Avoid Jinja2 autoescape=False; enable autoescaping.",
+            "B702": "Enable Mako's html_error_template safely.",
+            "B703": "Use Django's mark_safe() carefully with user data.",
+        }
+        return recommendations.get(
+            test_id,
+            "Review this finding and apply the principle of least privilege.",
+        )

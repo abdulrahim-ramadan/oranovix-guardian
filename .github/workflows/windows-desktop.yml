@@ -1,0 +1,38 @@
+name: Windows desktop verification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build and test dependencies
+        run: |
+          python -m venv venv
+          .\venv\Scripts\python -m pip install -r src/requirements.txt -r src/requirements-dev.txt "pyinstaller>=6,<7"
+      - name: Run desktop regression tests
+        run: .\venv\Scripts\python -m pytest -q src/tests/test_window_and_icon.py src/tests/test_responsive_pages.py src/tests/test_review_leftovers.py
+      - name: Measure desktop responsiveness under load
+        run: .\venv\Scripts\python -m src.build_tools.check_desktop_workload
+      - name: Build application and installer
+        run: .\src\build_tools\build.ps1
+      - name: Install into the runner and exercise the installed executable
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'GuardianInstall'
+          $installer = Get-Item dist/Oranovix_Guardian_Setup_*.exe
+          $setup = Start-Process $installer.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $destination + '"')) -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Installer exited with $($setup.ExitCode)" }
+          .\venv\Scripts\python -m pip install psutil pywin32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\venv\Scripts\python src/build_tools/check_installed_windows.py (Join-Path $destination 'Oranovix Guardian.exe')

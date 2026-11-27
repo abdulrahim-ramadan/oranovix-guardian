@@ -1,9 +1,9 @@
 """
 Entry point for the Oranovix Guardian desktop application.
 
-This module bootstraps the application by ensuring the project root is
+This module bootstraps the application by ensuring the source directory is
 present on ``sys.path`` (so all package imports resolve regardless of the
-working directory), instantiating the :class:`~gui.app.CodeGuardianApp`
+working directory), instantiating the :class:`~oranovix_guardian.gui.app.CodeGuardianApp`
 root window, and handing control to Tkinter's event loop.
 
 Running this file directly (``python main.py``) and importing it as a
@@ -16,7 +16,7 @@ Version: 1.1.0
 from __future__ import annotations
 
 import sys
-import os
+from pathlib import Path
 
 if sys.platform == "win32":
     # Own taskbar identity: our icon, not Python's, when run from source.
@@ -26,14 +26,13 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Ensure the project root directory is first on sys.path so that all
-# internal packages (gui, core, scanner_engine, …) can be imported with
-# simple top-level names regardless of the current working directory.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The source launcher and PyInstaller use the same qualified package imports.
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from core.app_paths import AppPaths
-from core.single_instance import SingleInstance, tell_already_running
-from gui.app import CodeGuardianApp
+from oranovix_guardian.core.app_paths import AppPaths
+from oranovix_guardian.core.single_instance import SingleInstance, tell_already_running
+from oranovix_guardian.gui.app import CodeGuardianApp
 
 
 def main() -> None:
@@ -43,8 +42,8 @@ def main() -> None:
     copy on the same data folder only brings the running one to the front:
     two copies would run their monitors on the same databases.  Data an
     older version wrote next to the exe is copied into the data folder
-    once, before anything reads it.  Then :class:`~gui.app.CodeGuardianApp`
-    shows the splash screen and builds the full UI, and ``mainloop()``
+    once, before anything reads it.  Then :class:`~oranovix_guardian.gui.app.CodeGuardianApp`
+    opens the scanner and creates other pages on demand, and ``mainloop()``
     blocks until the window is closed.
     """
     instance = SingleInstance.for_data_dir()
