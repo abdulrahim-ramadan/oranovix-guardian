@@ -15,9 +15,17 @@ class FakeFetcher(Fetcher):
 
     answers: Dict[str, Answer] = field(default_factory=dict)
     requests: List[Tuple[str, str, str]] = field(default_factory=list)
+    posts: List[Tuple[str, bytes, str]] = field(default_factory=list)
 
     def get(self, url: str, etag: str = "", last_modified: str = "") -> FetchResponse:
         self.requests.append((url, etag, last_modified))
+        return self._answer(url)
+
+    def post(self, url: str, body: bytes, content_type: str) -> FetchResponse:
+        self.posts.append((url, body, content_type))
+        return self._answer(url)
+
+    def _answer(self, url: str) -> FetchResponse:
         answer = self.answers.get(url)
         if answer is None:
             raise FetchError("no route to host")
