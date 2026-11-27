@@ -317,8 +317,9 @@ def _bare_app(monkeypatch: pytest.MonkeyPatch, closed: List[bool], callbacks: Li
 
     monkeypatch.setattr(ctk.CTk, "destroy", lambda self: closed.append(True))
     app = CodeGuardianApp.__new__(CodeGuardianApp)
-    app._live_defense, app._threat_hub, app._log_sentinel = _Monitor(), _Monitor(), _Monitor()
-    app._instance = _Released()
+    for name in ("_live_defense", "_threat_hub", "_log_sentinel"):
+        setattr(app, name, _Monitor())
+    setattr(app, "_instance", _Released())
     app._closing = False
     app._pages = {}
     monkeypatch.setattr(type(app), "withdraw", lambda self: None)

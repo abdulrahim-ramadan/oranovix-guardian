@@ -578,4 +578,4 @@ def test_versions_agree() -> None:
 
     assert installer_version is not None and installer_version.group(1).strip() == APP_VERSION
     assert f"Version: {APP_VERSION}" in main_text
-    assert APP_VERSION == "1.1.0"
+    assert APP_VERSION == "1.2.0"
