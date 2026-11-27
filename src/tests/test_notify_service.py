@@ -173,3 +173,75 @@ def test_scan_history_gives_the_last_scan_with_counts(tmp_path: Path, monkeypatc
     last = history.last_scan()
     assert last is not None
     assert last["target"] == "shop" and set(last["counts"]) == {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+
+
+def test_the_monitor_thread_ticks_wakes_and_stops() -> None:
+    import threading
+    from oranovix_guardian.notify.scheduler import NotificationMonitor
+
+    ticks: List[int] = []
+    second = threading.Event()
+
+    def tick() -> None:
+        ticks.append(1)
+        if len(ticks) >= 2:
+            second.set()
+
+    monitor = NotificationMonitor(tick, interval_seconds=3600)
+    monitor.start()
+    try:
+        monitor.wake()                      # an instant alarm: no waiting for the hour
+        assert second.wait(5)
+    finally:
+        assert monitor.stop(timeout=5)
+    assert not monitor.is_running
+
+
+def test_a_failing_tick_does_not_end_the_monitor() -> None:
+    import threading
+    from oranovix_guardian.notify.scheduler import NotificationMonitor
+
+    calls: List[int] = []
+    again = threading.Event()
+
+    def tick() -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database locked")
+        again.set()
+
+    monitor = NotificationMonitor(tick, interval_seconds=3600)
+    monitor.start()
+    try:
+        monitor.wake()
+        assert again.wait(5)
+    finally:
+        monitor.stop(timeout=5)
+
+
+def test_the_app_stops_the_notification_service_on_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    import customtkinter as ctk
+    from oranovix_guardian.gui.app import CodeGuardianApp
+
+    class Service:
+        calls = 0
+
+        def shutdown(self, timeout=None) -> None:
+            Service.calls += 1
+
+    monkeypatch.setattr(ctk.CTk, "destroy", lambda self: None)
+    app = CodeGuardianApp.__new__(CodeGuardianApp)
+    for name in ("_live_defense", "_threat_hub", "_log_sentinel"):
+        setattr(app, name, None)
+    setattr(app, "_notifications", Service())
+    app.destroy()
+    assert Service.calls == 1
+
+
+def test_the_service_registers_the_alarm_channel_once() -> None:
+    import inspect
+    from oranovix_guardian.gui import app
+
+    source = inspect.getsource(app.CodeGuardianApp._notification_service)
+    assert "add_channel(self._notifications.alarm_channel)" in source
+    assert "if self._notifications is None:" in source

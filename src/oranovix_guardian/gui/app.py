@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from oranovix_guardian.threat_intel.hub import HubState, ThreatIntelHub
     from oranovix_guardian.log_sentinel.controller import LogSentinelController
     from oranovix_guardian.log_sentinel.controller import SentinelState as LogSentinelState
+    from oranovix_guardian.notify.service import NotificationService
 # gui.pages and scanner_engine are imported lazily inside methods
 # to keep module import independent of page construction
 
@@ -107,6 +108,7 @@ class CodeGuardianApp(ctk.CTk):
         self._live_defense:  Optional[LiveDefenseController] = None
         self._threat_hub:    Optional[ThreatIntelHub] = None
         self._log_sentinel:  Optional[LogSentinelController] = None
+        self._notifications: Optional[NotificationService] = None
         self._feed_report_shown: Optional[object] = None
         self._instance = instance
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -184,6 +186,7 @@ class CodeGuardianApp(ctk.CTk):
         self.after(300, self._watch_storage_problems)
         self.after(400, self._offer_resumes)
         self.after(900, self._start_threat_feed)
+        self.after(1500, self._start_notifications)
 
     def _apply_frame_theme(self) -> None:
         """Color the native frame to match the current theme (Windows only)."""
@@ -308,6 +311,7 @@ class CodeGuardianApp(ctk.CTk):
         controller = self._live_defense_controller()
         sentinel = self._log_sentinel_controller()
         hub = self._threat_intel_hub()
+        notifications = self._notification_service()
         self._page_factories = {
             "scanner": lambda: ScannerPage(**args, on_scan_complete=self._on_scan_complete, on_scan_start=self._start_code_scan,
                                             on_scan_waiting=self._set_scan_waiting,
@@ -321,7 +325,8 @@ class CodeGuardianApp(ctk.CTk):
                                             on_open_feed=lambda: self._navigate("threat_feed")),
             "reports": lambda: ReportsPage(**args),
             "settings": lambda: SettingsPage(**args, on_theme_toggle=self._toggle_theme,
-                                             on_lang_change=self._change_lang, threat_hub=hub),
+                                             on_lang_change=self._change_lang, threat_hub=hub,
+                                             notify_service=notifications),
         }
         self._status_bar.set_monitoring(controller.is_running)
         self._status_bar.set_watching_logs(sentinel.is_running)
@@ -501,6 +506,38 @@ class CodeGuardianApp(ctk.CTk):
         if hub.store.count():
             self._show_feed_digest()
 
+    # ------------------------------------------------------------------
+    # Notifications (daily report, instant CRITICAL alarms)
+    # ------------------------------------------------------------------
+
+    def _notification_service(self) -> NotificationService:
+        """Outlives UI rebuilds. Reads only local state; sends nothing while switched off."""
+        if self._notifications is None:
+            from oranovix_guardian.log_sentinel.store import SecurityEventStore
+            from oranovix_guardian.notify.collect import ReportCollector
+            from oranovix_guardian.notify.service import NotificationService
+            stores: dict = {}
+
+            def sentinel_store():
+                if "events" not in stores:
+                    stores["events"] = SecurityEventStore()
+                return stores["events"]
+
+            self._notifications = NotificationService(collect=ReportCollector(
+                hub=lambda: self._threat_hub, live_defense=lambda: self._live_defense,
+                sentinel_store=sentinel_store,
+            ))
+            self._alarm_center.add_channel(self._notifications.alarm_channel)
+        return self._notifications
+
+    def _start_notifications(self) -> None:
+        if self._closing:
+            return
+        try:
+            self._notification_service().start()
+        except Exception:
+            _log.exception("notifications could not start")
+
     def _scan_project(self, path: str) -> None:
         """"Scan now" of a project: the normal scan, started on the scanner page."""
         self._navigate("scanner")
@@ -568,8 +605,8 @@ class CodeGuardianApp(ctk.CTk):
         self._shutdown_pool.shutdown(wait=False)
 
     def _services(self):
-        return [service for service in (self._live_defense, self._threat_hub, self._log_sentinel)
-                if service is not None]
+        services = (self._live_defense, self._threat_hub, self._log_sentinel, vars(self).get("_notifications"))
+        return [service for service in services if service is not None]
 
     @staticmethod
     def _stop_service(service, timeout: Optional[float] = 2) -> None:

@@ -44,6 +44,7 @@ from oranovix_guardian.core.version import APP_VERSION
 from oranovix_guardian.reports.pdf_generator import SHOW_SECRETS_SETTING
 
 if TYPE_CHECKING:
+    from oranovix_guardian.notify.service import NotificationService
     from oranovix_guardian.threat_intel.hub import ThreatIntelHub
 
 
@@ -108,11 +109,13 @@ class SettingsPage(ctk.CTkFrame):
 
     def __init__(
         self, master, on_theme_toggle, on_lang_change,
-        threat_hub: Optional["ThreatIntelHub"] = None, **kwargs,
+        threat_hub: Optional["ThreatIntelHub"] = None,
+        notify_service: Optional["NotificationService"] = None, **kwargs,
     ) -> None:
         tm = ThemeManager()
         super().__init__(master, fg_color=tm.c("bg"), corner_radius=0, **kwargs)
         self._threat_hub = threat_hub
+        self._notify_service = notify_service
         self._on_theme = on_theme_toggle
         self._on_lang  = on_lang_change
         # Obtain the singleton SoundManager to read and update sound settings
@@ -412,6 +415,13 @@ class SettingsPage(ctk.CTkFrame):
             feed_sec = _Section(scroll, f"\U0001f4e1  {lm.t('tf_settings_title')}")
             feed_sec.pack(fill="x", pady=(0, 12))
             self._build_threat_feed_section(feed_sec, tm, lm)
+
+        # ── Notifications ─────────────────────────────────────────────
+        if self._notify_service is not None:
+            from oranovix_guardian.gui.notify_panel import NotificationsPanel
+            notify_sec = _Section(scroll, f"🔔  {lm.t('nt_settings_title')}")
+            notify_sec.pack(fill="x", pady=(0, 12))
+            NotificationsPanel(notify_sec, self._notify_service).pack(fill="x")
 
         # ── Rules Manager ─────────────────────────────────────────────
         rules_sec = _Section(scroll, f"\U0001f4cb  {lm.t('rules_manager')}")
