@@ -15,9 +15,11 @@ Window frame: the main window keeps the native frame, so the taskbar
 button, minimize/maximize/close, Snap layouts, Win+Arrow keys and edge
 resizing are the system's own. On Windows the frame is colored to match
 the theme (:mod:`gui.window_frame`). Closing the window runs
-:meth:`CodeGuardianApp._on_close`.
+:meth:`CodeGuardianApp._on_close`, and so does a close asked by Windows
+or Restart Manager (Setup): ``WM_CLOSE``, ``WM_QUERYENDSESSION`` and
+``WM_ENDSESSION`` (:mod:`gui.session_end`).
 
-Version: 1.1.0
+Version: 1.2.0
 """
 from __future__ import annotations
 
@@ -108,6 +110,8 @@ class CodeGuardianApp(ctk.CTk):
         self._feed_report_shown: Optional[object] = None
         self._instance = instance
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Tk's name for WM_QUERYENDSESSION (logoff, Restart Manager).
+        self.protocol("WM_SAVE_YOURSELF", self._on_session_end)
 
         # Register observers so theme/language changes trigger a rebuild.
         # These registrations persist across UI rebuilds because the
@@ -176,6 +180,7 @@ class CodeGuardianApp(ctk.CTk):
         self._build_ui()
         self.deiconify()
         self._apply_frame_theme()
+        self._install_close_hook()
         self.after(300, self._watch_storage_problems)
         self.after(400, self._offer_resumes)
         self.after(900, self._start_threat_feed)
@@ -512,19 +517,55 @@ class CodeGuardianApp(ctk.CTk):
         self.withdraw()
         self._begin_shutdown()
 
+    def _close_request(self):
+        from oranovix_guardian.gui.session_end import CloseRequest
+        request = vars(self).get("_close_request_once")
+        if request is None:
+            request = self._close_request_once = CloseRequest(self._on_close)
+        return request
+
+    def _on_session_end(self) -> None:
+        """Windows or Restart Manager asks to close: the same clean close, once."""
+        self._close_request()()
+
+    def _install_close_hook(self) -> None:
+        """WM_ENDSESSION has no Tk protocol; a window procedure hook sees it (Windows)."""
+        from oranovix_guardian.gui.session_end import CloseMessages, WindowsCloseHook
+        if vars(self).get("_close_hook") is not None:
+            return
+        self._close_hook = WindowsCloseHook(CloseMessages(self._close_request(), wait=self._wait_for_shutdown))
+        self._close_hook.install(self)
+
+    def _wait_for_shutdown(self, timeout: float) -> None:
+        """At a logoff the process may end right after WM_ENDSESSION: stop and release now."""
+        from concurrent.futures import wait
+        if vars(self).get("_shutdown_jobs") is None:
+            self._start_stopping()
+        wait(self._shutdown_jobs, timeout=timeout)
+        if self._instance is not None:
+            self._instance.release()
+            self._instance = None
+
     def _monitor_action_pending(self) -> bool:
         return any(getattr(page, "action_pending", False) for page in self._pages.values())
 
     def _begin_shutdown(self) -> None:
+        if vars(self).get("_shutdown_jobs") is not None:
+            # A logoff already started stopping (_wait_for_shutdown); only the window is left.
+            self.after(20, self._finish_close)
+            return
         if self._monitor_action_pending():
             self.after(30, self._begin_shutdown)
             return
+        self._start_stopping()
+        self.after(20, self._finish_close)
+
+    def _start_stopping(self) -> None:
         self._shutdown_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="Stopping")
         self._shutdown_jobs = [self._shutdown_pool.submit(self._stop_service, service, None)
                                for service in self._services()]
         self._shutdown_jobs.append(self._shutdown_pool.submit(self._stop_workers))
         self._shutdown_pool.shutdown(wait=False)
-        self.after(20, self._finish_close)
 
     def _services(self):
         return [service for service in (self._live_defense, self._threat_hub, self._log_sentinel)
@@ -559,6 +600,9 @@ class CodeGuardianApp(ctk.CTk):
         jobs = vars(self).get("_shutdown_jobs")
         if jobs is not None and any(not job.done() for job in jobs):
             return
+        hook = vars(self).get("_close_hook")
+        if hook is not None:
+            hook.remove()
         try:
             if jobs is None:
                 self._closing = True
