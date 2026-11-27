@@ -106,6 +106,10 @@ class Fetcher(ABC):
     def get(self, url: str, etag: str = "", last_modified: str = "") -> FetchResponse:
         """GET *url*. Any HTTP status is returned; ``FetchError`` means no usable answer."""
 
+    def post(self, url: str, body: bytes, content_type: str) -> FetchResponse:
+        """POST *body* to *url* (notifications). Not every fetcher can."""
+        raise FetchError("This fetcher cannot send data.")
+
 
 class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
     """Follows a redirect only when the new address passes the same checks."""
@@ -209,7 +213,20 @@ class HttpFetcher(Fetcher):
         if last_modified:
             headers["If-Modified-Since"] = last_modified
         request = urllib.request.Request(url, headers=headers, method="GET")
+        return self._send(request)
 
+    def post(self, url: str, body: bytes, content_type: str) -> FetchResponse:
+        """POST over the same checks (scheme, public addresses, redirects, TLS, size).
+
+        The body of an error answer is kept, so the caller can read why
+        the request was refused.
+        """
+        self._check_url(url)
+        headers = {"User-Agent": self.USER_AGENT, "Accept": "application/json", "Content-Type": content_type}
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        return self._send(request, error_body=True)
+
+    def _send(self, request: urllib.request.Request, error_body: bool = False) -> FetchResponse:
         started = time.monotonic()
         try:
             with self._open(request, self._timeout) as response:
@@ -218,7 +235,8 @@ class HttpFetcher(Fetcher):
                 response_headers = response.headers
         except urllib.error.HTTPError as exc:
             # 304 and error pages arrive as exceptions; the status is the answer.
-            status, body, response_headers = exc.code, b"", exc.headers
+            status, response_headers = exc.code, exc.headers
+            body = self._error_body(exc) if error_body else b""
         except FetchError:
             raise
         except Exception as exc:
@@ -249,6 +267,12 @@ class HttpFetcher(Fetcher):
             except ValueError as exc:
                 raise FetchError("The address is not valid.") from exc
             self._guard(host, port)
+
+    def _error_body(self, exc: urllib.error.HTTPError) -> bytes:
+        try:
+            return exc.read(min(self._max_bytes, 64 * 1024))
+        except Exception:
+            return b""
 
     def _read(self, response: Any) -> bytes:
         declared = self._header(response.headers, "Content-Length")

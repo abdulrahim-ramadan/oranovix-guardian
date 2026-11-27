@@ -8,7 +8,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from oranovix_guardian.core.app_paths import AppPaths, DataFile
 from oranovix_guardian.core.storage_problems import StorageProblems
@@ -134,6 +134,26 @@ class ScanHistory:
             "avg_score":    int(row[3] or 0),
             "last_scan":    (row[4] or "")[:10] or "Never",
             "last_target":  os.path.basename(row[5]) if row[5] else "—",
+        }
+
+    def last_scan(self) -> Optional[Dict]:
+        """The newest scan: date, folder name, full path and counts per severity; ``None`` when there is none."""
+        try:
+            with closing(self._connect()) as conn:
+                row = conn.execute("""
+                    SELECT scan_date, target_path, critical_count, high_count, medium_count, low_count
+                    FROM scans ORDER BY id DESC LIMIT 1
+                """).fetchone()
+        except Exception:
+            row = None
+        if not row:
+            return None
+        return {
+            "date": row[0] or "",
+            "target": os.path.basename(os.path.normpath(row[1])) if row[1] else "",
+            "path": row[1] or "",
+            "counts": {"CRITICAL": int(row[2] or 0), "HIGH": int(row[3] or 0),
+                       "MEDIUM": int(row[4] or 0), "LOW": int(row[5] or 0)},
         }
 
     def get_recent(self, limit: int = 5) -> List[Dict]:

@@ -125,8 +125,8 @@ def test_no_catch_up_when_yesterday_was_sent(tmp_path: Path) -> None:
     assert len(rig.sent()) == 1
 
 
-def test_no_catch_up_when_the_last_report_is_recent(tmp_path: Path) -> None:
-    """The last report must be more than 20 h old."""
+def test_a_missed_late_evening_report_is_caught_up_once(tmp_path: Path) -> None:
+    """Yesterday 23:30 was missed; the start next morning (31.5 h later) sends it."""
     clock = Clock(datetime(2026, 11, 20, 22, 0, tzinfo=UTC))
     rig = Rig(tmp_path, clock, NotifyConfig(enabled=True, daily_time="23:30"))
     rig.scheduler.tick()                                        # 20.11. 23:00 Berlin: not yet

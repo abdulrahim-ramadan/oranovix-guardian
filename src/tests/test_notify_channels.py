@@ -6,7 +6,7 @@ import logging
 import smtplib
 import ssl
 from datetime import datetime, timezone
-from typing import Any, List
+from typing import Any, Dict, List
 
 import pytest
 
@@ -28,7 +28,7 @@ def message(text: str = "Hello\nWorld", html_part: str = "<p>Hello</p>", telegra
 
 
 def settings(**changes: Any) -> EmailSettings:
-    values = dict(enabled=True, consented=True, host="smtp.example.com", port=465, username="me@example.com",
+    values: Dict[str, Any] = dict(enabled=True, consented=True, host="smtp.example.com", port=465, username="me@example.com",
                   from_addr="me@example.com", to_addrs=("you@example.com",))
     values.update(changes)
     return EmailSettings(**values)
