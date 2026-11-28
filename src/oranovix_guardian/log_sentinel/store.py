@@ -181,6 +181,15 @@ class SecurityEventStore(EventSink):
             ).fetchall()
         return [self._event(row) for row in rows]
 
+    def events_since(self, since: datetime, limit: int = 5000) -> List[SecurityEvent]:
+        """Events with a request at or after *since* (open or acknowledged), newest first."""
+        with self._lock, closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"SELECT {self._COLUMNS} FROM events WHERE last_time >= ? ORDER BY last_time DESC, id DESC LIMIT ?",
+                (_text(since), limit),
+            ).fetchall()
+        return [self._event(row) for row in rows]
+
     def count(self, event_filter: EventFilter = EventFilter()) -> int:
         where, parameters = self._where(event_filter)
         with self._lock, closing(self._connect()) as conn:

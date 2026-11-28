@@ -40,9 +40,11 @@ from oranovix_guardian.scanner_engine.deps.osv_db import OSVDatabase, OSVUpdateE
 from oranovix_guardian.scanner_engine.gemini_config import GEMINI_API_KEY_ENV, GeminiConfig
 from oranovix_guardian.scanner_engine.rule_engine import RuleEngine, Rule, RuleLanguage, RulePatternError
 from oranovix_guardian.core.settings_file import SettingsFile
+from oranovix_guardian.core.version import APP_VERSION
 from oranovix_guardian.reports.pdf_generator import SHOW_SECRETS_SETTING
 
 if TYPE_CHECKING:
+    from oranovix_guardian.notify.service import NotificationService
     from oranovix_guardian.threat_intel.hub import ThreatIntelHub
 
 
@@ -107,11 +109,13 @@ class SettingsPage(ctk.CTkFrame):
 
     def __init__(
         self, master, on_theme_toggle, on_lang_change,
-        threat_hub: Optional["ThreatIntelHub"] = None, **kwargs,
+        threat_hub: Optional["ThreatIntelHub"] = None,
+        notify_service: Optional["NotificationService"] = None, **kwargs,
     ) -> None:
         tm = ThemeManager()
         super().__init__(master, fg_color=tm.c("bg"), corner_radius=0, **kwargs)
         self._threat_hub = threat_hub
+        self._notify_service = notify_service
         self._on_theme = on_theme_toggle
         self._on_lang  = on_lang_change
         # Obtain the singleton SoundManager to read and update sound settings
@@ -412,6 +416,13 @@ class SettingsPage(ctk.CTkFrame):
             feed_sec.pack(fill="x", pady=(0, 12))
             self._build_threat_feed_section(feed_sec, tm, lm)
 
+        # ── Notifications ─────────────────────────────────────────────
+        if self._notify_service is not None:
+            from oranovix_guardian.gui.notify_panel import NotificationsPanel
+            notify_sec = _Section(scroll, f"🔔  {lm.t('nt_settings_title')}")
+            notify_sec.pack(fill="x", pady=(0, 12))
+            NotificationsPanel(notify_sec, self._notify_service).pack(fill="x")
+
         # ── Rules Manager ─────────────────────────────────────────────
         rules_sec = _Section(scroll, f"\U0001f4cb  {lm.t('rules_manager')}")
         rules_sec.pack(fill="x", pady=(0, 12))
@@ -425,7 +436,7 @@ class SettingsPage(ctk.CTkFrame):
         # Each tuple: (text, font_size, weight, theme_color_key)
         about_lines: list[tuple[str, int, Literal["normal", "bold"], str]] = [
             ("Oranovix Guardian", 14, "bold", "text"),
-            ("Professional Security Scanner  •  v1.0.0", 11, "normal", "text2"),
+            (f"Professional Security Scanner  •  v{APP_VERSION}", 11, "normal", "text2"),
             ("100% free — powered by Bandit, Gemini & ReportLab", 10, "normal", "text3"),
         ]
         for line in about_lines:

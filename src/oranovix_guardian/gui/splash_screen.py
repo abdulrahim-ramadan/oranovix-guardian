@@ -11,6 +11,7 @@ from typing import Callable
 
 import customtkinter as ctk
 
+from oranovix_guardian.core.version import APP_VERSION
 from oranovix_guardian.gui.animation_manager import AnimationManager
 from oranovix_guardian.gui.asset_helper      import load_logo
 
@@ -126,7 +127,7 @@ class SplashScreen(ctk.CTkToplevel):
 
         # Version
         ctk.CTkLabel(
-            self, text="v1.0.0  •  Professional Edition",
+            self, text=f"v{APP_VERSION}  •  Professional Edition",
             font=ctk.CTkFont(size=9),
             text_color="#333333", fg_color="transparent",
         ).pack()

@@ -1,5 +1,57 @@
 # Oranovix Guardian — Development Progress
 
+## Clean installer updates (main @ 75e1981)
+
+Baseline: 2215 passing, 7 skipped, pyright 0 errors (53 s). One test was deselected: `test_result_pages_only_construct_visible_rows_and_expanded_details` (from #13) hangs in `mainloop()` on this machine, also alone and on unchanged main; its `after(150, quit)` never runs. It is deselected in every run below and not changed.
+
+### Phase 1: one-folder build and polite close (branch `fix/installer-close`)
+
+Problem: reinstalling while the app ran failed with "DeleteFile failed; code 5", then "Setup was unable to automatically close all applications". The one-file exe runs as two processes, a bootloader without a window and the app. Restart Manager cannot close the windowless parent, and the exe unpacked itself to `%TEMP%` at every start, which antivirus products also dislike.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | PyInstaller `--onedir`; every other flag kept. The installer ships the whole `dist\Oranovix Guardian\` folder and first deletes `{app}\_internal` and the loose `assets`/`translations` folders of 1.1.0, so an update never mixes two bundles. Shortcuts use the exe's own icon. `-OneFile` still builds the portable exe, without an installer. | `src/build_tools/build.ps1`, `src/build_tools/installer.iss` |
+| 2 | `RunningMarker` holds `OranovixGuardianRunning` and, when Windows allows it, `Global\OranovixGuardianRunning` (everyone may open it for SYNCHRONIZE, so Setup under another account sees it). It never blocks a start; the per-data-folder lock still decides that. `AppLocks` takes both in `main.py` and releases both once. | `core/single_instance.py`, `main.py` |
+| 3 | `AppMutex` with both names, `CloseApplications=yes`, `RestartApplications=no`. `SetupAppRunningError` and `UninstallAppRunningError` say "Oranovix Guardian is running, please close it." Inno checks `AppMutex` at the start of Setup and of the uninstaller, before anything is copied or removed. | `installer.iss` |
+| 4 | Close requests from Windows: `WM_CLOSE` reaches Tk (`WM_DELETE_WINDOW`); Tk maps `WM_QUERYENDSESSION` to `WM_SAVE_YOURSELF`, now bound to `_on_session_end`; a window procedure hook sees `WM_ENDSESSION`. All go through one `CloseRequest`, so `_on_close` runs once. `WM_QUERYENDSESSION` always answers yes. At a real logoff the hook waits up to 5 s for the monitors and releases both locks, because Windows may end the process when the message returns. For Restart Manager (`ENDSESSION_CLOSEAPP`) it does not wait, since Tk must keep running the close. | `gui/session_end.py`, `gui/app.py` |
+| 5 | `test_hundred_thousand_lines_in_under_five_seconds` is now `..._in_under_fifteen_seconds` (15 s). A `slow` marker is registered in `pytest.ini`; it and `test_fifty_thousand_addresses_through_the_monitor` carry it, so `-m "not slow"` leaves them out. No other limit changed. | `pytest.ini`, `tests/test_sentinel_monitor.py`, `tests/test_sentinel_adversarial.py` |
+| 6 | Version 1.2.0 in `core/version.py`, `main.py`, the installer and the README badge; the splash screen and the About card read `APP_VERSION` instead of a fixed "v1.0.0". | `core/version.py`, `gui/splash_screen.py`, `gui/pages/settings_page.py` |
+
+Tests: 2263 passing, 7 skipped, 1 failing (49 new, in `tests/test_installer_close.py`). `-m "not slow"`: 2262 passing. Type check: `uvx pyright`, 0 errors. The failure is `test_fifty_thousand_addresses_through_the_monitor` (5 s limit, unchanged): 6.2 to 8.5 s while other programs kept the CPU at 91 %. It passed in the baseline run on an idle machine. The hundred-thousand-line test took 13.7 to 16.8 s under the same load.
+
+Checked on the built exe (not in the suite): the window belongs to the started process and there is no child process; both mutexes exist while it runs, also without admin rights; `WM_CLOSE`, and `WM_QUERYENDSESSION` (answer 1) followed by `WM_ENDSESSION` with `ENDSESSION_CLOSEAPP`, both end it with exit code 0 in 0.7 s, and both mutexes are gone afterwards. `build.ps1` compiled `dist\Oranovix_Guardian_Setup_v1.2.0.exe`. Setup itself was not run (it needs elevation).
+
+Known limits:
+
+- The window procedure hook is Windows only and is installed after the first page is shown. A logoff during the splash phase only gets the Tk protocols.
+- A logoff waits at most 5 s; a monitor still busy after that is cut off by Windows, as before.
+
+### Phase 2: daily digest by email and Telegram (branch `feature/notifications`, on top of phase 1)
+
+Goal: every morning a short report of what happened, by email and/or Telegram, and optionally CRITICAL alarms at once. Off by default, minimal data, nothing secret leaves the machine.
+
+| Step | Change | Main files |
+|------|--------|-----------|
+| 1 | `DailyReport.build` (pure, clock and period passed in) from a `ReportState` the collector read locally: Threat Feed counts via `DigestBuilder`, titles/CVE ids/projects of items that affect a project; sites down or back up (host only); Log Sentinel hits per severity and top rules, no address (with "include network" the /24 or /48); Live Defense counts and relative paths of HIGH/CRITICAL events (absolute or `..` paths are cut to the file name); last scan date, project and counts. "Hide project names" gives Project A, B, C… with the mapping in `settings.json`, and then also drops the site host, which would name the project. | `notify/report.py`, `notify/collect.py`, `log_sentinel/store.py` (`events_since`), `core/scan_history.py` (`last_scan`) |
+| 2 | `ReportRenderer`: plain text, Telegram HTML (`<b> <i> <code> <a>`, `html.escape` on every value, no tag across two lines) and an email part with `dir="rtl"` for Arabic; texts in the UI language. | `notify/render.py` |
+| 3 | `EmailNotifier`: `EmailMessage` with text and HTML parts; 465 implicit TLS, other ports STARTTLS before the login, port 25 and servers without STARTTLS refused; `TlsTrust.context()` as for the feed. CR/LF in an address or the subject is refused before anything is built; addresses checked with `parseaddr` and a shape check; at most 5 recipients. | `notify/mail.py` |
+| 4 | `TelegramNotifier`: `sendMessage` as JSON POST through `HttpFetcher` (`public_only`, checked redirects, TLS), new `HttpFetcher.post`, which keeps the error body so Telegram's reason can be shown. Split at 4096 characters between lines. Token shape `digits:35 characters` checked before saving and before sending. "Find my chat" calls `getUpdates` once and keeps only chat ids and names. `safe_error_text` removes the token, its secret half, any `bot<id>:<secret>` and every URL from each error text. | `notify/telegram.py`, `notify/redaction.py`, `threat_intel/fetcher.py` |
+| 5 | Outbox (`notify.db`): retry after 1, 5, 15, 60 min, then hourly; dropped after 48 h with a visible status; permanent errors (refused login, unknown chat) are not retried; dedup by message id; last report date and time per channel. | `notify/outbox.py` |
+| 6 | Scheduler on a `Monitor` thread (`NotificationMonitor`, 30 s, woken at once by an instant alarm): report at the chosen local time once per day and channel; at the first tick after a start, a missed previous day is sent when the last report is more than 20 h old; wall-clock comparison, so 08:00 stays 08:00 across the change to and from summer time, a time inside the skipped spring hour goes out at 03:00, the repeated autumn hour sends once. Off: nothing is built, queued or sent. | `notify/scheduler.py` |
+| 7 | `NotifyChannel(AlarmChannel)`: CRITICAL only, at most 5 per hour and channel, the rest folded into one message after the hour; message id from the alarm's finding ids, so the same alarm is never pushed twice. The text is built from the rule name and file name; addresses and URLs are scrubbed (Log Sentinel titles carry the address). | `notify/alarms.py` |
+| 8 | Settings → Notifications: master switch, daily time, instant alerts, hide names, include network; email and Telegram fields, Send test, last delivery status, Preview. Consent per channel names the host, what is sent and what never is; a changed SMTP server asks again; "Find my chat" asks first, as it contacts Telegram. Password and token in the credential store. The app owns the service, adds its alarm channel and stops it on close. All texts EN/DE/AR. | `gui/notify_panel.py`, `gui/notify_dialogs.py`, `gui/pages/settings_page.py`, `gui/app.py`, `translations/*.json` |
+
+Tests: 2379 passing, 7 skipped, 1 failing (116 new in `tests/test_notify_*.py`; helpers in `tests/notify_fakes.py`, `FakeFetcher.post` added). `-m "not slow"`: 2378 passing. Type check: `uvx pyright`, 0 errors. The failure is the same `test_fifty_thousand_addresses_through_the_monitor` under load as in phase 1 (this run took 205 s against 53 s for the baseline). No test opens a connection: a recording SMTP class replaces `smtplib.SMTP`/`SMTP_SSL`, Telegram goes through `FakeFetcher`, and the "off" tests run with the `no_network` fixture. Tokens and passwords in tests are built at runtime. The time zone tests use a small Europe/Berlin `tzinfo` in the test helpers (EU rule), because Windows Python has no tz database without `tzdata`.
+
+Checked by hand: the panel in a window in EN and AR (screenshots), and a preview built by the real collector from empty stores.
+
+Known limits:
+
+- Telegram messages are split between lines; a single line longer than 4096 characters (not produced by the report) is cut inside.
+- The fold-up hour is the local clock hour; on the night the clock goes back, the two 02:00 hours share one count.
+- Arabic labels in the settings panel have the same word-order problem as the rest of the Tk UI (no bidi in Tk); the email part is right-to-left, Telegram orders Arabic itself.
+- The tests for the monitor thread and the app wiring were written after that code (coverage), not before it.
+
 ## Follow-up after the audit review (main @ b33892f)
 
 Baseline: 2055 passing, 6 skipped, 1 failing. The failing test is `test_hundred_thousand_lines_in_under_five_seconds` (Log Sentinel throughput). It took 5.6 s against a 5.0 s limit on unchanged main while the machine was busy, and the whole suite took 97 s instead of the usual 50 s. It is a timing test, not a functional failure, and it was left as it is. Pyright: 12 errors in `assets/icon_generator.py` and `tests/test_window_and_icon.py` from `fix/window-and-icon`. They were fixed first (type annotations only, the generated icons are byte-identical).

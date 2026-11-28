@@ -1,13 +1,20 @@
-# Builds "dist\Oranovix Guardian.exe" (one file) and the installer
-# "dist\Oranovix_Guardian_Setup_v1.1.0.exe".
+# Builds the folder "dist\Oranovix Guardian\" (one-folder build) and the
+# installer "dist\Oranovix_Guardian_Setup_v1.2.0.exe", which ships that folder.
 #
 #   powershell -ExecutionPolicy Bypass -File src\build_tools\build.ps1
 #   powershell -ExecutionPolicy Bypass -File src\build_tools\build.ps1 -NoInstaller
+#   powershell -ExecutionPolicy Bypass -File src\build_tools\build.ps1 -OneFile
+#
+# The installer needs the one-folder build. A one-file exe runs as a
+# windowless bootloader plus the app, which Restart Manager cannot close
+# ("DeleteFile failed; code 5"), and it unpacks itself to %TEMP% at every
+# start, which antivirus products dislike. -OneFile builds the portable
+# "dist\Oranovix Guardian.exe" instead, and no installer.
 #
 # Needs the project venv (venv\) with the packages of src\requirements.txt
 # and PyInstaller, and Inno Setup 6 for the installer.
 
-param([switch]$NoInstaller)
+param([switch]$NoInstaller, [switch]$OneFile)
 
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -19,7 +26,7 @@ $Python = Join-Path $Root "venv\Scripts\python.exe"
 # lives in %LOCALAPPDATA%\Oranovix Guardian (core\app_paths.py), so
 # rules\custom_rules.json is not bundled.
 $PyInstallerArgs = @(
-    "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed",
+    "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed",
     "--paths", (Join-Path $Root "src"),
     "--name", "Oranovix Guardian",
     "--icon", (Join-Path $Root "assets\icon.ico"),
@@ -41,10 +48,11 @@ $PyInstallerArgs = @(
     "--specpath", (Join-Path $Root "build\pyinstaller"),
     (Join-Path $Root "main.py")
 )
+if ($OneFile) { $PyInstallerArgs[$PyInstallerArgs.IndexOf("--onedir")] = "--onefile" }
 & $Python @PyInstallerArgs
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
-if ($NoInstaller) { return }
+if ($NoInstaller -or $OneFile) { return }
 
 $Iscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",

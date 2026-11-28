@@ -12,7 +12,7 @@ import hashlib
 import os
 import sys
 from pathlib import Path
-from typing import IO, Any, Optional
+from typing import IO, Any, List, Optional, Tuple
 
 from oranovix_guardian.core.app_paths import APP_NAME, AppPaths
 
@@ -90,6 +90,111 @@ class SingleInstance:
             return False
         self._lock_file = handle
         return True
+
+
+RUNNING_MUTEX = "OranovixGuardianRunning"
+
+# Everyone may open (SYNCHRONIZE) the Global mutex, so Setup run by another
+# account still sees it; system, administrators and the owner keep full access.
+_GLOBAL_MUTEX_SDDL = "D:(A;;0x00100000;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)"
+
+
+class RunningMarker:
+    """Fixed named mutexes that tell Setup and the uninstaller the app is running.
+
+    Unlike :class:`SingleInstance` the name does not depend on the data
+    folder, so the installer (``AppMutex`` in ``installer.iss``) finds
+    every running copy. It never blocks a start. ``Global\\`` is taken
+    when Windows allows it; the session-local one always.
+    """
+
+    NAMES = (RUNNING_MUTEX, f"Global\\{RUNNING_MUTEX}")
+
+    def __init__(self) -> None:
+        self._handles: List[Tuple[str, Any]] = []
+
+    @property
+    def held(self) -> Tuple[str, ...]:
+        return tuple(name for name, _ in self._handles)
+
+    def acquire(self) -> bool:
+        if sys.platform != "win32" or self._handles:
+            return True
+        for name in self.NAMES:
+            handle = self._create(name)
+            if handle:
+                self._handles.append((name, handle))
+        return True
+
+    def release(self) -> None:
+        if not self._handles:
+            return
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32")
+        for _, handle in self._handles:
+            kernel32.CloseHandle(handle)
+        self._handles = []
+
+    @classmethod
+    def _create(cls, name: str) -> Any:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        attributes = cls._security_attributes() if name.startswith("Global\\") else None
+        try:
+            # An existing mutex (a second copy) is opened, not refused: that is fine here.
+            pointer = ctypes.byref(attributes) if attributes is not None else None
+            return kernel32.CreateMutexW(pointer, False, name) or None
+        finally:
+            if attributes is not None:
+                kernel32.LocalFree(attributes.lpSecurityDescriptor)
+
+    @staticmethod
+    def _security_attributes() -> Any:
+        import ctypes
+        from ctypes import wintypes
+
+        class SecurityAttributes(ctypes.Structure):
+            _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                        ("bInheritHandle", wintypes.BOOL)]
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+        convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
+        convert.restype = wintypes.BOOL
+        descriptor = ctypes.c_void_p()
+        if not convert(_GLOBAL_MUTEX_SDDL, 1, ctypes.byref(descriptor), None):
+            return None         # Windows' default security then
+        return SecurityAttributes(ctypes.sizeof(SecurityAttributes), descriptor.value, False)
+
+
+class AppLocks:
+    """The per-data-folder lock and the running marker, held and released together."""
+
+    def __init__(self, instance: Any, marker: Any) -> None:
+        self._instance = instance
+        self._marker = marker
+        self._held = False
+
+    def acquire(self) -> bool:
+        """``False`` when another copy runs on this data folder; the marker is then not taken."""
+        if not self._instance.acquire():
+            return False
+        self._marker.acquire()
+        self._held = True
+        return True
+
+    def release(self) -> None:
+        if not self._held:
+            return
+        self._held = False
+        try:
+            self._marker.release()
+        finally:
+            self._instance.release()
 
 
 def tell_already_running() -> None:
